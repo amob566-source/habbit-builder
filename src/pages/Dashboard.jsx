@@ -1,25 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-
-const BASE_URL = 'http://localhost:3001'
-
-async function getTasks() {
-  const res = await fetch(`${BASE_URL}/api/tasks`)
-  if (!res.ok) throw new Error('Failed to fetch tasks')
-  return res.json()
-}
-
-async function getGoals() {
-  const res = await fetch(`${BASE_URL}/api/goals`)
-  if (!res.ok) throw new Error('Failed to fetch goals')
-  return res.json()
-}
-
-async function generateAISequence() {
-  const res = await fetch(`${BASE_URL}/api/ai/generate-sequence`, { method: 'POST' })
-  if (!res.ok) throw new Error('Failed to generate AI sequence')
-  return res.json()
-}
+import { getHabits, getGoals, getAnalytics, generateAISequence, updateHabit } from '../services/api'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -34,30 +15,32 @@ function getDayLabel() {
   return new Date().toLocaleDateString(undefined, { weekday: 'long' })
 }
 
-// Map a backend task to the props HabitItem expects
-function taskToHabitProps(task) {
-  const completed = !!task.completed || task.status === 'done'
-  const active = task.status === 'active' || task.status === 'in_progress'
-  const pct = completed ? 100 : task.progress ?? (active ? 50 : 0)
+// Map a backend habit to the props HabitItem expects
+function habitToItemProps(habit) {
+  const completed = !!habit.done
+  const pct = completed ? 100 : habit.pct ?? 0
   const sub = completed
-    ? `Completed${task.completedAt ? ' · ' + new Date(task.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`
-    : task.scheduledAt
-      ? `Scheduled ${new Date(task.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-      : task.description ?? ''
+    ? `Completed${habit.lastCompletedAt ? ' · ' + new Date(habit.lastCompletedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`
+    : habit.target
+      ? `${habit.target}${habit.time ? ' · ' + habit.time : ''}`
+      : habit.time
+        ? `Scheduled ${habit.time}`
+        : habit.category ?? ''
   return {
-    id: task.id,
-    label: task.title,
-    status: completed ? 'done' : active ? 'active' : 'pending',
+    id: habit.id,
+    label: habit.title,
+    status: completed ? 'done' : 'active',
     pct,
     sub,
+    done: completed,
   }
 }
 
-// Derive summary stats from a tasks array
-function buildStats(tasks) {
-  const done = tasks.filter(t => t.completed || t.status === 'done').length
-  const total = tasks.length
-  const focusHrs = tasks.reduce((acc, t) => acc + (t.focusMinutes ?? 0), 0) / 60
+// Derive summary stats from a habits array
+function buildStats(habits) {
+  const done = habits.filter(h => !!h.done).length
+  const total = habits.length
+  const focusHrs = 0
   return { done, total, focusHrs }
 }
 
@@ -125,7 +108,7 @@ function HabitItem({ id, label, status, pct, sub, action, onClick }) {
 export default function Dashboard() {
   const navigate = useNavigate()
 
-  const [tasks, setTasks] = useState([])
+  const [habits, setHabits] = useState([])
   const [goals, setGoals] = useState([])
   const [aiSequence, setAiSequence] = useState(null)
   const [aiLoading, setAiLoading] = useState(false)
@@ -133,20 +116,69 @@ export default function Dashboard() {
   const [streak, setStreak] = useState(0)
 
   useEffect(() => {
-    Promise.allSettled([getTasks(), getGoals()])
-      .then(([tasksRes, goalsRes]) => {
-        if (tasksRes.status === 'fulfilled') setTasks(tasksRes.value ?? [])
+    Promise.allSettled([getHabits('all'), getGoals(), getAnalytics()])
+      .then(([habitsRes, goalsRes, analyticsRes]) => {
+        if (habitsRes.status === 'fulfilled') setHabits(habitsRes.value ?? [])
         if (goalsRes.status === 'fulfilled') setGoals(goalsRes.value ?? [])
+        if (analyticsRes.status === 'fulfilled') {
+          const daily = analyticsRes.value?.daily ?? []
+          let count = 0
+          for (let i = daily.length - 1; i >= 0; i -= 1) {
+            if (daily[i].completed > 0) count += 1
+            else break
+          }
+          setStreak(count)
+        }
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error('Dashboard load error:', err)
         setLoading(false)
       })
   }, [])
 
-  function handleAIOverview() {
+  async function handleAIOverview() {
     setAiLoading(true)
-    generateAISequence()
-      .then(data => setAiSequence(data))
-      .catch(err => console.error('AI sequence error:', err))
-      .finally(() => setAiLoading(false))
+    try {
+      const data = await generateAISequence()
+      setAiSequence(data)
+    } catch (err) {
+      console.error('AI sequence error:', err)
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  async function handleHabitToggle(id) {
+    const current = habits.find(h => h.id === id)
+    if (!current) return
+
+    const updatedHabit = {
+      ...current,
+      done: current.done ? 0 : 1,
+      pct: current.done ? 0 : 100,
+    }
+
+    setHabits(hs => hs.map(h => h.id === id ? updatedHabit : h))
+
+    try {
+      const persisted = await updateHabit(id, {
+        title: updatedHabit.title,
+        description: updatedHabit.description ?? '',
+        frequency: updatedHabit.frequency ?? updatedHabit.target ?? null,
+        icon: updatedHabit.icon ?? null,
+        color: updatedHabit.color ?? null,
+        target: updatedHabit.target ?? null,
+        time: updatedHabit.time ?? null,
+        category: updatedHabit.category ?? null,
+        streak: updatedHabit.streak ?? 0,
+        pct: updatedHabit.pct ?? 0,
+        done: updatedHabit.done ? 1 : 0,
+      })
+      setHabits(hs => hs.map(h => h.id === id ? { ...h, ...persisted } : h))
+    } catch (err) {
+      console.error('Failed to toggle habit:', err)
+    }
   }
 
   function handleTaskClick(taskId) {
@@ -154,8 +186,8 @@ export default function Dashboard() {
   }
 
   // Derived display data
-  const stats = buildStats(tasks)
-  const habitProps = tasks.map(taskToHabitProps)
+  const stats = buildStats(habits)
+  const habitProps = habits.map(habitToItemProps)
 
   // AI insights: prefer backend response, otherwise show static fallback
   const insights = aiSequence?.insights ?? [
@@ -232,18 +264,18 @@ export default function Dashboard() {
             <div className="card-title fade-up"><span className="material-symbols-outlined icon-sm">checklist</span> Today's Habits</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {loading ? (
-                <div className="card fade-up d2" style={{ color: 'var(--text-muted)', font: 'var(--text-body)' }}>Loading tasks…</div>
+                <div className="card fade-up d2" style={{ color: 'var(--text-muted)', font: 'var(--text-body)' }}>Loading habits…</div>
               ) : habitProps.length > 0 ? (
                 habitProps.map(h => (
                   <HabitItem
                     key={h.id}
                     {...h}
-                    action={h.status === 'active' ? 'Focus' : undefined}
-                    onClick={() => handleTaskClick(h.id)}
+                    action={h.done ? 'Undo' : 'Complete'}
+                    onClick={() => handleHabitToggle(h.id)}
                   />
                 ))
               ) : (
-                // Static fallback when backend has no tasks yet
+                // Static fallback when backend has no habits yet
                 <>
                   <HabitItem label="Morning Routine" status="done" pct={100} sub="Completed · 06:30" />
                   <HabitItem label="Hydration Protocol" status="done" pct={100} sub="3/3 Liters completed" />
