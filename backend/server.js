@@ -402,19 +402,107 @@ app.get('/api/debug/all', (req, res) => {
 
 // Get analytics data
 app.get('/api/analytics', (req, res) => {
-  db.all(
-    `SELECT 
-      DATE(tc.completedAt) as date,
-      COUNT(*) as completed_count
-     FROM task_completions tc
-     GROUP BY DATE(tc.completedAt)
-     ORDER BY date DESC
-     LIMIT 30`,
-    (err, rows) => {
-      if (err) res.status(500).json({ error: err.message });
-      else res.json(rows);
-    }
-  );
+  const now = new Date();
+  const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const start28 = new Date(utcToday);
+  start28.setUTCDate(start28.getUTCDate() - 27);
+
+  const dateKeys = Array.from({ length: 28 }, (_, i) => {
+    const d = new Date(start28.getTime() + i * 24 * 60 * 60 * 1000);
+    return formatUTCDate(d);
+  });
+
+  db.get('SELECT COUNT(*) AS habitCount, COALESCE(MAX(streak), 0) AS bestStreak FROM habits WHERE status = "active"', (err, habitMeta) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    db.all(
+      `SELECT date, SUM(completed) AS completed
+       FROM (
+         SELECT DATE(completedAt) AS date, 1 AS completed FROM habit_completions WHERE DATE(completedAt) >= ?
+         UNION ALL
+         SELECT DATE(completedAt) AS date, 1 AS completed FROM task_completions WHERE DATE(completedAt) >= ?
+       )
+       GROUP BY date
+       ORDER BY date ASC`,
+      [formatUTCDate(start28), formatUTCDate(start28)],
+      (err2, rows) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+
+        const countByDate = rows.reduce((acc, row) => {
+          acc[row.date] = row.completed;
+          return acc;
+        }, {});
+
+        const daily = dateKeys.map(date => ({
+          date,
+          completed: countByDate[date] || 0,
+          total: Math.max(habitMeta.habitCount || 1, 1),
+        }));
+
+        const currentWeek = daily.slice(21);
+        const previousWeek = daily.slice(14, 21);
+
+        const currentCompleted = currentWeek.reduce((sum, day) => sum + day.completed, 0);
+        const previousCompleted = previousWeek.reduce((sum, day) => sum + day.completed, 0);
+        const currentActiveDays = currentWeek.filter(day => day.completed > 0).length;
+        const previousActiveDays = previousWeek.filter(day => day.completed > 0).length;
+
+        const habitCount = Math.max(habitMeta.habitCount, 1);
+        const focusScore = Math.min(100, Math.round((currentCompleted / (habitCount * 7)) * 100));
+        const consistency = Math.min(100, Math.round((currentActiveDays / 7) * 100));
+        const recoveryRate = Math.min(100, Math.round(Math.max(30, Math.min(100, (currentCompleted / Math.max(previousCompleted, 1)) * 20 + 40))));
+        const outputQuality = Math.min(100, Math.round((Math.min(14, habitMeta.bestStreak) / 14) * 50 + Math.min(1, currentCompleted / (habitCount * 7)) * 50));
+
+        const currentFocusScore = focusScore;
+        const previousFocusScore = Math.min(100, Math.round((previousCompleted / (habitCount * 7)) * 100));
+        const currentConsistency = consistency;
+        const previousConsistency = Math.min(100, Math.round((previousActiveDays / 7) * 100));
+        const currentRecoveryRate = recoveryRate;
+        const previousRecoveryRate = Math.min(100, Math.round(Math.max(30, Math.min(100, (previousCompleted / Math.max(1, previousCompleted)) * 20 + 40))));
+        const currentOutputQuality = outputQuality;
+        const previousOutputQuality = Math.min(100, Math.round((Math.min(14, habitMeta.bestStreak) / 14) * 50 + Math.min(1, previousCompleted / (habitCount * 7)) * 50));
+
+        db.all(
+          `SELECT t.id AS id, t.title AS title, tc.completedAt AS completedAt, 'task' AS type
+           FROM task_completions tc
+           JOIN tasks t ON t.id = tc.taskId
+           ORDER BY tc.completedAt DESC
+           LIMIT 6`,
+          (err3, taskRows) => {
+            if (err3) return res.status(500).json({ error: err3.message });
+
+            db.all(
+              `SELECT h.id AS id, h.title AS title, hc.completedAt AS completedAt, 'habit' AS type
+               FROM habit_completions hc
+               JOIN habits h ON h.id = hc.habitId
+               ORDER BY hc.completedAt DESC
+               LIMIT 6`,
+              (err4, habitRows) => {
+                if (err4) return res.status(500).json({ error: err4.message });
+
+                const recentCompleted = [...taskRows, ...habitRows]
+                  .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))
+                  .slice(0, 6);
+
+                return res.json({
+                  daily,
+                  focusScore: Math.max(0, focusScore),
+                  consistency: Math.max(0, consistency),
+                  recoveryRate: Math.max(0, recoveryRate),
+                  outputQuality: Math.max(0, outputQuality),
+                  focusDelta: currentFocusScore - previousFocusScore,
+                  consistencyDelta: currentConsistency - previousConsistency,
+                  recoveryDelta: currentRecoveryRate - previousRecoveryRate,
+                  outputDelta: currentOutputQuality - previousOutputQuality,
+                  recentCompleted,
+                });
+              }
+            );
+          }
+        );
+      }
+    );
+  });
 });
 
 // Start server

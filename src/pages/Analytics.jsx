@@ -1,12 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-
-const BASE_URL = 'http://localhost:3001'
-
-async function getAnalytics() {
-  const res = await fetch(`${BASE_URL}/api/analytics`)
-  if (!res.ok) throw new Error('Failed to fetch analytics')
-  return res.json()
-}
+import { useEffect, useState } from 'react'
+import { getAnalytics } from '../services/api'
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -206,9 +199,9 @@ export default function Analytics() {
             {error && !loading && (
               <span style={{ font: 'var(--text-label-sm)', color: 'rgba(255,100,100,0.8)', marginRight: 8 }}>Using cached data</span>
             )}
-            <button className="btn btn-ghost" style={{ fontSize: 11 }}>7D</button>
+            {/* <button className="btn btn-ghost" style={{ fontSize: 11 }}>7D</button>
             <button className="btn btn-primary" style={{ fontSize: 11 }}>30D</button>
-            <button className="btn btn-ghost" style={{ fontSize: 11 }}>All</button>
+            <button className="btn btn-ghost" style={{ fontSize: 11 }}>All</button> */}
           </div>
         </div>
       </div>
