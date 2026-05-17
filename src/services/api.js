@@ -32,6 +32,12 @@ export async function updateGoal(id, goal) {
   return handleRes(res);
 }
 
+export async function deleteGoal(id) {
+  const res = await fetch(`${API_URL}/goals/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`deleteGoal: ${res.status}`);
+  return handleRes(res);
+}
+
 export async function getHabits(goalId) {
   const url = (!goalId || goalId === 'all') ? `${API_URL}/habits` : `${API_URL}/habits/${encodeURIComponent(goalId)}`;
   const res = await fetch(url);

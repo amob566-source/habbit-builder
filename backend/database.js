@@ -13,16 +13,20 @@ db.serialize(() => {
       description TEXT,
       priority TEXT,
       status TEXT DEFAULT 'active',
+      icon TEXT,
+      color TEXT,
       children TEXT DEFAULT '[]',
       pct INTEGER DEFAULT 0,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
-  // If the table existed before we added children/pct, try to add them safely.
+  // If the table existed before we added children/pct/icon/color, try to add them safely.
   // ALTER TABLE will error if the column already exists; ignore the error.
   db.run("ALTER TABLE goals ADD COLUMN children TEXT DEFAULT '[]'", () => {});
   db.run("ALTER TABLE goals ADD COLUMN pct INTEGER DEFAULT 0", () => {});
+  db.run("ALTER TABLE goals ADD COLUMN icon TEXT", () => {});
+  db.run("ALTER TABLE goals ADD COLUMN color TEXT", () => {});
 
   // Habits table
   db.run(`

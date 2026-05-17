@@ -24,12 +24,12 @@ app.get('/api/goals', (req, res) => {
 
 // Create goal
 app.post('/api/goals', (req, res) => {
-  const { title, description, priority, children, pct } = req.body;
+  const { title, description, priority, icon, color, children, pct } = req.body;
   const childrenStr = typeof children === 'string' ? children : JSON.stringify(children ?? []);
   const pctVal = typeof pct === 'number' ? pct : (pct ? Number(pct) : 0);
   db.run(
-    'INSERT INTO goals (title, description, priority, children, pct) VALUES (?, ?, ?, ?, ?)',
-    [title, description, priority, childrenStr, pctVal],
+    'INSERT INTO goals (title, description, priority, icon, color, children, pct) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [title, description, priority, icon || null, color || null, childrenStr, pctVal],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       // return the created row
@@ -43,12 +43,12 @@ app.post('/api/goals', (req, res) => {
 
 // Update goal
 app.put('/api/goals/:id', (req, res) => {
-  const { title, description, priority, status, children, pct } = req.body;
+  const { title, description, priority, status, icon, color, children, pct } = req.body;
   const childrenStr = typeof children === 'string' ? children : JSON.stringify(children ?? []);
   const pctVal = typeof pct === 'number' ? pct : (pct ? Number(pct) : 0);
   db.run(
-    'UPDATE goals SET title = ?, description = ?, priority = ?, status = ?, children = ?, pct = ? WHERE id = ?',
-    [title, description, priority, status, childrenStr, pctVal, req.params.id],
+    'UPDATE goals SET title = ?, description = ?, priority = ?, status = ?, icon = ?, color = ?, children = ?, pct = ? WHERE id = ?',
+    [title, description, priority, status, icon || null, color || null, childrenStr, pctVal, req.params.id],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       db.get('SELECT * FROM goals WHERE id = ?', [req.params.id], (e, row) => {

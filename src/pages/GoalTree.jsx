@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { getGoals, createGoal, updateGoal as apiUpdateGoal } from '../services/api'
+import { createPortal } from 'react-dom'
+import { getGoals, createGoal, updateGoal as apiUpdateGoal, deleteGoal as apiDeleteGoal } from '../services/api'
 
 const ICON_OPTIONS = [
   'code', 'fitness_center', 'psychology', 'star', 'rocket_launch', 'bolt',
@@ -67,19 +68,20 @@ function Modal({ title, onClose, children }) {
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
-  return (
+  return createPortal(
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
       style={{
-        position: 'fixed', inset: 0, zIndex: 1000,
-        background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(10px)',
+        position: 'fixed', inset: 0, zIndex: 99999,
+        background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(12px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: 16,
       }}>
       <div style={{
+        position: 'relative', zIndex: 100000,
         background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)',
         borderRadius: 20, padding: '28px 28px 24px', width: '100%', maxWidth: 480,
-        maxHeight: '90vh', overflowY: 'auto',
+        maxHeight: 'calc(100vh - 40px)', overflowY: 'auto',
         animation: 'modal-in 0.22s cubic-bezier(0.34,1.56,0.64,1)',
       }}>
         <style>{`@keyframes modal-in{from{opacity:0;transform:scale(0.92) translateY(8px)}to{opacity:1;transform:none}}`}</style>
@@ -89,7 +91,8 @@ function Modal({ title, onClose, children }) {
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -282,6 +285,7 @@ function ConfirmModal({ message, onConfirm, onClose }) {
 
 // ─── GoalNode ──────────────────────────────────────────────────
 function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubGoal, onDeleteSubGoal }) {
+  // Default open when there are children so they don't vanish on tab switch
   const [open, setOpen] = useState(true)
   const [editGoalOpen, setEditGoalOpen] = useState(false)
   const [addSubOpen, setAddSubOpen] = useState(false)
@@ -323,8 +327,7 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
       </div>
 
       {/* ── Children ── */}
-      {open && (
-        <div style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }}>
+      <div style={{ paddingLeft: 24, display: open ? 'flex' : 'none', flexDirection: 'column', gap: 8, position: 'relative' }}>
           <div style={{ position: 'absolute', left: 24, top: 0, bottom: 0, width: 2, background: 'var(--border)' }} />
 
           {goal.children.map(child => (
@@ -337,8 +340,8 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
               <div style={{
                 position: 'absolute', left: -24, top: '50%', transform: 'translateY(-50%)',
                 width: 8, height: 8, borderRadius: '50%',
-                background: child.status === 'done' ? 'var(--primary)' : '#2a2a2a',
-                border: `2px solid ${child.status === 'active' ? goal.color : 'rgba(255,255,255,0.18)'}`,
+                background: child.status === 'done' ? goal.color : '#2a2a2a',
+                border: `2px solid ${child.status === 'active' || child.status === 'done' ? goal.color : 'rgba(255,255,255,0.18)'}`,
                 flexShrink: 0,
               }} />
 
@@ -375,8 +378,7 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
           >
             <span className="material-symbols-outlined icon-sm">add</span>Add sub-goal
           </button>
-        </div>
-      )}
+      </div>
 
       {/* ── Modals ── */}
       {editGoalOpen && (
@@ -464,14 +466,17 @@ export default function GoalTree() {
   // Persist parent-goal edits and update local state
   const updateGoal = async (goalId, data) => {
     try {
-      // map UI fields to API fields
+      const existingGoal = goals.find(g => g.id === goalId)
+      // map UI fields to API fields, preserving existing children if edit form doesn't include them
       const payload = {
-        title: data.label ?? data.title,
-        description: data.description ?? '',
-        priority: data.priority ?? null,
-        status: data.status ?? 'active',
-        children: JSON.stringify(data.children ?? []),
-        pct: data.pct ?? 0,
+        title: data.label ?? data.title ?? existingGoal?.title ?? existingGoal?.label,
+        description: data.description ?? existingGoal?.description ?? '',
+        priority: data.priority ?? existingGoal?.priority ?? null,
+        status: data.status ?? existingGoal?.status ?? 'active',
+        icon: data.icon ?? existingGoal?.icon ?? 'star',
+        color: data.color ?? existingGoal?.color ?? 'var(--primary)',
+        children: JSON.stringify(data.children ?? existingGoal?.children ?? []),
+        pct: data.pct ?? existingGoal?.pct ?? 0,
       }
       const updated = await apiUpdateGoal(goalId, payload)
       // normalize returned row to UI shape
@@ -481,7 +486,7 @@ export default function GoalTree() {
         description: updated.description ?? payload.description,
         color: updated.color ?? g.color,
         icon: updated.icon ?? g.icon,
-        children: updated.children ? (typeof updated.children === 'string' ? JSON.parse(updated.children) : updated.children) : (data.children ?? []),
+        children: updated.children ? (typeof updated.children === 'string' ? JSON.parse(updated.children) : updated.children) : (existingGoal?.children ?? g.children ?? []),
         pct: typeof updated.pct === 'number' ? updated.pct : payload.pct,
       } : g))
     } catch (err) {
@@ -489,12 +494,11 @@ export default function GoalTree() {
     }
   }
 
-  // Local-only delete (no DELETE endpoint in the spec)
+  // Delete goal via API service and update local state
   const deleteGoal = async (goalId) => {
     try {
-      // optimistic update
+      await apiDeleteGoal(goalId)
       setGoals(gs => gs.filter(g => g.id !== goalId))
-      await fetch(`/api/goals/${goalId}`, { method: 'DELETE' })
     } catch (err) {
       console.error('Failed to delete goal:', err)
     }
@@ -505,13 +509,27 @@ export default function GoalTree() {
     setGoals(gs => {
       const next = gs.map(g => {
         if (g.id !== goalId) return g
-        const children = [...g.children, { id: Date.now(), ...data }]
+        const child = {
+          id: Date.now(),
+          ...data,
+          pct: data.status === 'done' ? 100 : data.pct ?? 0,
+        }
+        const children = [...g.children, child]
         return { ...g, children, pct: calcParentPct(children) }
       })
       const parent = next.find(g => g.id === goalId)
       if (parent) {
-        // persist parent children/pct
-        apiUpdateGoal(goalId, { children: JSON.stringify(parent.children), pct: parent.pct }).catch(console.error)
+        // persist full parent payload so children column is saved correctly
+        apiUpdateGoal(goalId, {
+          title: parent.label ?? parent.title,
+          description: parent.description ?? '',
+          icon: parent.icon ?? null,
+          color: parent.color ?? null,
+          priority: parent.priority ?? null,
+          status: parent.status ?? 'active',
+          children: JSON.stringify(parent.children),
+          pct: parent.pct,
+        }).catch(console.error)
       }
       return next
     })
@@ -522,11 +540,27 @@ export default function GoalTree() {
     setGoals(gs => {
       const next = gs.map(g => {
         if (g.id !== goalId) return g
-        const children = g.children.map(c => c.id === subId ? { ...c, ...data } : c)
+        const children = g.children.map(c => {
+          if (c.id !== subId) return c
+          return {
+            ...c,
+            ...data,
+            pct: data.status === 'done' ? 100 : data.pct ?? c.pct,
+          }
+        })
         return { ...g, children, pct: calcParentPct(children) }
       })
       const parent = next.find(g => g.id === goalId)
-      if (parent) apiUpdateGoal(goalId, { children: JSON.stringify(parent.children), pct: parent.pct }).catch(console.error)
+      if (parent) apiUpdateGoal(goalId, {
+        title: parent.label ?? parent.title,
+        description: parent.description ?? '',
+        icon: parent.icon ?? null,
+        color: parent.color ?? null,
+        priority: parent.priority ?? null,
+        status: parent.status ?? 'active',
+        children: JSON.stringify(parent.children),
+        pct: parent.pct,
+      }).catch(console.error)
       return next
     })
   }
@@ -540,7 +574,16 @@ export default function GoalTree() {
         return { ...g, children, pct: calcParentPct(children) }
       })
       const parent = next.find(g => g.id === goalId)
-      if (parent) apiUpdateGoal(goalId, { children: JSON.stringify(parent.children), pct: parent.pct }).catch(console.error)
+      if (parent) apiUpdateGoal(goalId, {
+        title: parent.label ?? parent.title,
+        description: parent.description ?? '',
+        icon: parent.icon ?? null,
+        color: parent.color ?? null,
+        priority: parent.priority ?? null,
+        status: parent.status ?? 'active',
+        children: JSON.stringify(parent.children),
+        pct: parent.pct,
+      }).catch(console.error)
       return next
     })
   }
@@ -552,6 +595,8 @@ export default function GoalTree() {
         title: data.label,
         description: data.description ?? '',
         priority: data.priority ?? null,
+        icon: data.icon ?? 'star',
+        color: data.color ?? 'var(--primary)',
         children: JSON.stringify([]),
         pct: data.pct ?? 0,
       }
@@ -559,6 +604,8 @@ export default function GoalTree() {
       setGoals(gs => [...gs, {
         ...created,
         label: created.title ?? data.label,
+        icon: created.icon ?? data.icon ?? 'star',
+        color: created.color ?? data.color ?? 'var(--primary)',
         children: created.children ? (typeof created.children === 'string' ? JSON.parse(created.children) : created.children) : [],
         pct: typeof created.pct === 'number' ? created.pct : data.pct ?? 0,
       }])
