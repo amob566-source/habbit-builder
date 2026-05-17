@@ -45,6 +45,7 @@ db.serialize(() => {
       streak INTEGER DEFAULT 0,
       pct INTEGER DEFAULT 0,
       done INTEGER DEFAULT 0,
+      lastCompletedAt TEXT DEFAULT NULL,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (goalId) REFERENCES goals(id)
     )
@@ -59,6 +60,7 @@ db.serialize(() => {
   db.run("ALTER TABLE habits ADD COLUMN streak INTEGER DEFAULT 0", () => {});
   db.run("ALTER TABLE habits ADD COLUMN pct INTEGER DEFAULT 0", () => {});
   db.run("ALTER TABLE habits ADD COLUMN done INTEGER DEFAULT 0", () => {});
+  db.run("ALTER TABLE habits ADD COLUMN lastCompletedAt TEXT", () => {});
 
   // Tasks table
   db.run(`
@@ -76,6 +78,17 @@ db.serialize(() => {
       FOREIGN KEY (goalId) REFERENCES goals(id)
     )
   `);
+
+  // Habit completion history for weekly tracking
+  db.run(`
+    CREATE TABLE IF NOT EXISTS habit_completions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      habitId INTEGER NOT NULL,
+      completedAt DATETIME NOT NULL,
+      FOREIGN KEY (habitId) REFERENCES habits(id)
+    )
+  `);
+  db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_habit_completions_habit_day ON habit_completions(habitId, DATE(completedAt))", () => {});
 
   // Task completions (for analytics)
   db.run(`

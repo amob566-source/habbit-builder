@@ -11,6 +11,68 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+function getUTCWeekStart() {
+  const now = new Date();
+  const day = now.getUTCDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+  const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
+  monday.setUTCHours(0, 0, 0, 0);
+  return monday;
+}
+
+function formatUTCDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function attachHabitWeekHistory(habits, res, single = false) {
+  const habitIds = habits.map(h => h.id);
+  const weekStart = getUTCWeekStart();
+  const startISO = weekStart.toISOString();
+  const dayKeys = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart.getTime() + i * 24 * 60 * 60 * 1000);
+    return formatUTCDate(d);
+  });
+  const todayKey = formatUTCDate(new Date());
+
+  if (habitIds.length === 0) {
+    const result = habits.map(h => ({
+      ...h,
+      weekHistory: Array(7).fill(false),
+      done: false,
+    }))
+    return res.json(single && result.length === 1 ? result[0] : result)
+  }
+
+  const placeholders = habitIds.map(() => '?').join(', ');
+  db.all(
+    `SELECT habitId, completedAt FROM habit_completions WHERE habitId IN (${placeholders}) AND completedAt >= ?`,
+    [...habitIds, startISO],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      const historyByHabit = rows.reduce((acc, row) => {
+        const hId = row.habitId;
+        const dateKey = formatUTCDate(new Date(row.completedAt));
+        if (!acc[hId]) acc[hId] = new Set();
+        acc[hId].add(dateKey);
+        return acc;
+      }, {});
+
+      const result = habits.map(h => {
+        const completedDays = historyByHabit[h.id] || new Set();
+        return {
+          ...h,
+          weekHistory: dayKeys.map(key => completedDays.has(key)),
+          done: completedDays.has(todayKey),
+        };
+      });
+
+      return res.json(single && result.length === 1 ? result[0] : result);
+    }
+  );
+}
+
 // ==================== GOALS ENDPOINTS ====================
 
 // Get all goals
@@ -75,8 +137,8 @@ app.get('/api/habits/:goalId', (req, res) => {
     'SELECT * FROM habits WHERE goalId = ? AND status = "active"',
     [req.params.goalId],
     (err, rows) => {
-      if (err) res.status(500).json({ error: err.message });
-      else res.json(rows);
+      if (err) return res.status(500).json({ error: err.message });
+      return attachHabitWeekHistory(rows, res);
     }
   );
 });
@@ -85,16 +147,17 @@ app.get('/api/habits/:goalId', (req, res) => {
 app.get('/api/habits', (req, res) => {
   db.all('SELECT * FROM habits WHERE status = "active"', (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    return res.json(rows);
+    return attachHabitWeekHistory(rows, res);
   });
 });
 
 // Create habit
 app.post('/api/habits', (req, res) => {
-  const { title, description, frequency, goalId, icon, color, target, time, category, streak, pct, done } = req.body;
+  const { title, description, frequency, goalId, icon, color, target, time, category, streak, pct, done, lastCompletedAt } = req.body;
+  const last = lastCompletedAt || null;
   db.run(
-    'INSERT INTO habits (title, description, frequency, goalId, icon, color, target, time, category, streak, pct, done) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [title, description, frequency, goalId, icon || null, color || null, target || null, time || null, category || null, streak || 0, pct || 0, done ? 1 : 0],
+    'INSERT INTO habits (title, description, frequency, goalId, icon, color, target, time, category, streak, pct, done, lastCompletedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [title, description, frequency, goalId, icon || null, color || null, target || null, time || null, category || null, streak || 0, pct || 0, done ? 1 : 0, last],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       db.get('SELECT * FROM habits WHERE id = ?', [this.lastID], (e, row) => {
@@ -107,18 +170,80 @@ app.post('/api/habits', (req, res) => {
 
 // Update habit
 app.put('/api/habits/:id', (req, res) => {
-  const { title, description, frequency, goalId, icon, color, target, time, category, streak, pct, done, status } = req.body;
-  db.run(
-    'UPDATE habits SET title = ?, description = ?, frequency = ?, goalId = ?, icon = ?, color = ?, target = ?, time = ?, category = ?, streak = ?, pct = ?, done = ?, status = ? WHERE id = ?',
-    [title, description, frequency, goalId, icon || null, color || null, target || null, time || null, category || null, streak || 0, pct || 0, done ? 1 : 0, status || 'active', req.params.id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      db.get('SELECT * FROM habits WHERE id = ?', [req.params.id], (e, row) => {
-        if (e) return res.status(500).json({ error: e.message });
-        return res.json(row);
-      });
+  const { title, description, frequency, goalId, icon, color, target, time, category, pct, done, status } = req.body;
+  const id = req.params.id;
+
+  // Read existing habit to compute streak/lastCompletedAt correctly
+  db.get('SELECT * FROM habits WHERE id = ?', [id], (err, existing) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!existing) return res.status(404).json({ error: 'Habit not found' });
+
+    const now = new Date();
+    const nowISO = now.toISOString();
+    const todayKey = formatUTCDate(now);
+    const prev = existing.lastCompletedAt ? new Date(existing.lastCompletedAt) : null;
+    const prevUTC = prev ? Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth(), prev.getUTCDate()) : null;
+    const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const yesterdayUTC = todayUTC - 24 * 60 * 60 * 1000;
+
+    let newLast = existing.lastCompletedAt;
+    let newStreak = existing.streak || 0;
+
+    const saveHabit = () => {
+      db.run(
+        'UPDATE habits SET title = ?, description = ?, frequency = ?, goalId = ?, icon = ?, color = ?, target = ?, time = ?, category = ?, streak = ?, pct = ?, done = ?, lastCompletedAt = ?, status = ? WHERE id = ?',
+        [title, description, frequency, goalId, icon || null, color || null, target || null, time || null, category || null, newStreak, pct || 0, done ? 1 : 0, newLast, status || 'active', id],
+        function (e) {
+          if (e) return res.status(500).json({ error: e.message });
+          db.get('SELECT * FROM habits WHERE id = ?', [id], (er, row) => {
+            if (er) return res.status(500).json({ error: er.message });
+            return attachHabitWeekHistory([row], res, true);
+          });
+        }
+      );
+    };
+
+    if (typeof done !== 'undefined') {
+      if (done) {
+        if (prevUTC === todayUTC) {
+          newStreak = existing.streak || 1;
+        } else if (prevUTC === yesterdayUTC) {
+          newStreak = (existing.streak || 0) + 1;
+        } else {
+          newStreak = 1;
+        }
+        newLast = nowISO;
+        db.run(
+          'DELETE FROM habit_completions WHERE habitId = ? AND DATE(completedAt) = ?',
+          [id, todayKey],
+          (e) => {
+            if (e) return res.status(500).json({ error: e.message });
+            db.run(
+              'INSERT INTO habit_completions (habitId, completedAt) VALUES (?, ?)',
+              [id, nowISO],
+              (err2) => {
+                if (err2) return res.status(500).json({ error: err2.message });
+                saveHabit();
+              }
+            );
+          }
+        );
+      } else {
+        newLast = null;
+        newStreak = 0;
+        db.run(
+          'DELETE FROM habit_completions WHERE habitId = ? AND DATE(completedAt) = ?',
+          [id, todayKey],
+          (e) => {
+            if (e) return res.status(500).json({ error: e.message });
+            saveHabit();
+          }
+        );
+      }
+    } else {
+      saveHabit();
     }
-  );
+  });
 });
 
 // Delete habit

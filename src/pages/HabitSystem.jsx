@@ -22,9 +22,24 @@ const COLOR_OPTIONS = [
   { label: 'Cyan', value: '#22d3ee' },
 ]
 
-// generate stable week data per habit id
-function makeWeekRow(id) {
-  return WEEK.map((_, i) => ((id * 7 + i * 3) % 10) > 3)
+function normalizeHabit(habit, fallback = {}) {
+  const h = Array.isArray(habit) ? habit[0] : habit
+  if (!h) {
+    return {
+      ...fallback,
+      label: fallback.label ?? fallback.title,
+      weekHistory: Array.isArray(fallback.weekHistory) ? fallback.weekHistory : Array(7).fill(false),
+    }
+  }
+
+  return {
+    ...fallback,
+    ...h,
+    label: h.label ?? h.title,
+    weekHistory: Array.isArray(h.weekHistory)
+      ? h.weekHistory
+      : (Array.isArray(fallback.weekHistory) ? fallback.weekHistory : Array(7).fill(false)),
+  }
 }
 
 // ─── Shared Styles ───────────────────────────────────────────────
@@ -330,7 +345,6 @@ function HabitRow({ habit, weekRow, onEdit, onToggle }) {
 // ─── Root Component ──────────────────────────────────────────────
 export default function HabitSystem() {
   const [habits, setHabits] = useState([])
-  const [weekRowsState, setWeekRowsState] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -346,17 +360,16 @@ export default function HabitSystem() {
   useEffect(() => {
     getHabits('all')
       .then(data => {
-        const normalized = data.map(h => ({ ...h, label: h.label ?? h.title }))
+        const normalized = data.map(h => ({
+          ...h,
+          label: h.label ?? h.title,
+          weekHistory: Array.isArray(h.weekHistory) ? h.weekHistory : Array(7).fill(false),
+        }))
         setHabits(normalized)
-        const rows = {}
-        normalized.forEach(h => { rows[h.id] = makeWeekRow(h.id) })
-        setWeekRowsState(rows)
       })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false))
   }, [])
-
-  // ── CRUD ──────────────────────────────────────────────────────
 
   const addHabit = async (data) => {
     try {
@@ -375,9 +388,12 @@ export default function HabitSystem() {
         done: data.done ? 1 : 0,
       }
       const created = await createHabit(payload)
-      const normalized = { ...created, label: created.label ?? created.title }
+      const normalized = {
+        ...created,
+        label: created.label ?? created.title,
+        weekHistory: Array.isArray(created.weekHistory) ? created.weekHistory : Array(7).fill(false),
+      }
       setHabits(hs => [...hs, normalized])
-      setWeekRowsState(wr => ({ ...wr, [normalized.id]: makeWeekRow(normalized.id) }))
     } catch (err) {
       console.error('Failed to create habit:', err)
     } finally {
@@ -403,7 +419,7 @@ export default function HabitSystem() {
         done: data.done ? 1 : 0,
       }
       const updated = await updateHabit(editHabit.id, payload)
-      const normalized = { ...updated, label: updated.label ?? updated.title }
+      const normalized = normalizeHabit(updated, editHabit)
       setHabits(hs => hs.map(h => h.id === editHabit.id ? normalized : h))
     } catch (err) {
       console.error('Failed to update habit:', err)
@@ -416,7 +432,6 @@ export default function HabitSystem() {
     try {
       await fetch(`/api/habits/${id}`, { method: 'DELETE' })
       setHabits(hs => hs.filter(h => h.id !== id))
-      setWeekRowsState(wr => { const n = { ...wr }; delete n[id]; return n })
       setConfirmDeleteId(null)
       setEditHabit(null)
     } catch (err) {
@@ -450,7 +465,8 @@ export default function HabitSystem() {
         pct: updatedHabit.pct ?? 0,
         done: updatedHabit.done ? 1 : 0,
       })
-      setHabits(hs => hs.map(h => h.id === id ? persisted : h))
+      const normalized = normalizeHabit(persisted, updatedHabit)
+      setHabits(hs => hs.map(h => h.id === id ? normalized : h))
     } catch (err) {
       console.error('Failed to persist habit done:', err)
     }
@@ -544,7 +560,7 @@ export default function HabitSystem() {
             <div key={h.id} className={`fade-up d${Math.min(i + 1, 5)}`}>
               <HabitRow
                 habit={h}
-                weekRow={weekRowsState[h.id] ?? makeWeekRow(h.id)}
+                weekRow={h.weekHistory ?? Array(7).fill(false)}
                 onEdit={setEditHabit}
                 onToggle={toggleDone}
               />
