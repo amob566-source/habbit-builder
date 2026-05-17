@@ -1,32 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
-
-// ─── Initial Data ───────────────────────────────────────────────
-const INITIAL_GOALS = [
-  {
-    id: 1, label: 'Technical Mastery', icon: 'code', color: 'var(--primary)', pct: 68,
-    children: [
-      { id: 11, label: 'System Architecture', pct: 80, status: 'active', sub: 'In Progress · Q2' },
-      { id: 12, label: 'API Design Patterns', pct: 55, status: 'active', sub: 'In Progress' },
-      { id: 13, label: 'Performance Optimization', pct: 30, status: 'pending', sub: 'Queued · Q3' },
-    ]
-  },
-  {
-    id: 2, label: 'Physical Excellence', icon: 'fitness_center', color: 'var(--tertiary)', pct: 52,
-    children: [
-      { id: 21, label: 'Strength Foundation', pct: 70, status: 'active', sub: 'In Progress' },
-      { id: 22, label: 'Mobility & Recovery', pct: 40, status: 'active', sub: '3/5 Sessions/wk' },
-      { id: 23, label: 'Endurance Protocol', pct: 0, status: 'locked', sub: 'Locked · Complete Foundation first' },
-    ]
-  },
-  {
-    id: 3, label: 'Deep Focus Capacity', icon: 'psychology', color: 'var(--secondary)', pct: 75,
-    children: [
-      { id: 31, label: 'Pomodoro Mastery', pct: 90, status: 'done', sub: 'Complete' },
-      { id: 32, label: 'Environment Design', pct: 75, status: 'active', sub: 'In Progress' },
-      { id: 33, label: 'Flow State Protocol', pct: 45, status: 'active', sub: 'In Progress' },
-    ]
-  },
-]
+import { useState, useEffect } from 'react'
+import { getGoals, createGoal, updateGoal as apiUpdateGoal } from '../services/api'
 
 const ICON_OPTIONS = [
   'code', 'fitness_center', 'psychology', 'star', 'rocket_launch', 'bolt',
@@ -45,10 +18,6 @@ const COLOR_OPTIONS = [
 ]
 
 const STATUS_OPTIONS = ['active', 'pending', 'done', 'locked']
-
-let nextId = 100
-
-function uid() { return ++nextId }
 
 // ─── Helpers ────────────────────────────────────────────────────
 function calcParentPct(children) {
@@ -92,7 +61,6 @@ function StatusBadge({ status }) {
 
 // ─── Modal ─────────────────────────────────────────────────────
 function Modal({ title, onClose, children }) {
-  // Close on Escape
   useEffect(() => {
     const handler = e => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
@@ -158,7 +126,7 @@ const btnIcon = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
 }
 
-// ─── Goal Form (used for create & edit parent goal) ────────────
+// ─── Goal Form (create & edit parent goal) ─────────────────────
 function GoalForm({ initial, onSave, onDelete, onClose }) {
   const [label, setLabel] = useState(initial?.label ?? '')
   const [icon, setIcon] = useState(initial?.icon ?? 'star')
@@ -170,7 +138,6 @@ function GoalForm({ initial, onSave, onDelete, onClose }) {
   return (
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Label */}
         <div>
           <label style={labelStyle}>Goal Title</label>
           <input
@@ -179,7 +146,6 @@ function GoalForm({ initial, onSave, onDelete, onClose }) {
           />
         </div>
 
-        {/* Progress */}
         <div>
           <label style={labelStyle}>Overall Progress — {pct}%</label>
           <input type="range" min={0} max={100} value={pct}
@@ -187,7 +153,6 @@ function GoalForm({ initial, onSave, onDelete, onClose }) {
             style={{ width: '100%', accentColor: color }} />
         </div>
 
-        {/* Icon */}
         <div>
           <label style={labelStyle}>Icon</label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -204,7 +169,6 @@ function GoalForm({ initial, onSave, onDelete, onClose }) {
           </div>
         </div>
 
-        {/* Color */}
         <div>
           <label style={labelStyle}>Color</label>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -223,7 +187,6 @@ function GoalForm({ initial, onSave, onDelete, onClose }) {
         </div>
       </div>
 
-      {/* Actions */}
       <div style={{ display: 'flex', gap: 8, marginTop: 24 }}>
         {onDelete && (
           <button style={btnDanger} onClick={onDelete}>
@@ -231,7 +194,8 @@ function GoalForm({ initial, onSave, onDelete, onClose }) {
           </button>
         )}
         <button style={btnGhost} onClick={onClose}>Cancel</button>
-        <button style={{ ...btnPrimary, background: valid ? 'var(--primary)' : 'rgba(255,255,255,0.08)', color: valid ? '#001a10' : 'var(--text-muted)', cursor: valid ? 'pointer' : 'not-allowed' }}
+        <button
+          style={{ ...btnPrimary, background: valid ? 'var(--primary)' : 'rgba(255,255,255,0.08)', color: valid ? '#001a10' : 'var(--text-muted)', cursor: valid ? 'pointer' : 'not-allowed' }}
           disabled={!valid}
           onClick={() => valid && onSave({ label: label.trim(), icon, color, pct })}>
           {initial ? 'Save Changes' : 'Create Goal'}
@@ -322,7 +286,7 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
   const [editGoalOpen, setEditGoalOpen] = useState(false)
   const [addSubOpen, setAddSubOpen] = useState(false)
   const [editSubId, setEditSubId] = useState(null)
-  const [confirmDelete, setConfirmDelete] = useState(null) // 'goal' | subId
+  const [confirmDelete, setConfirmDelete] = useState(null)
 
   const editingSub = goal.children.find(c => c.id === editSubId)
 
@@ -331,7 +295,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
 
       {/* ── Parent Card ── */}
       <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        {/* Circle progress — click to expand */}
         <div style={{ position: 'relative', flexShrink: 0, cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
           <CircleProgress pct={goal.pct} color={goal.color} />
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -339,7 +302,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
           </div>
         </div>
 
-        {/* Info */}
         <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
           <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>{goal.label}</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4, fontFamily: 'JetBrains Mono, monospace' }}>
@@ -347,7 +309,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
           </div>
         </div>
 
-        {/* Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button title="Edit Goal" onClick={() => setEditGoalOpen(true)} style={btnIcon}>
             <span className="material-symbols-outlined icon-sm">edit</span>
@@ -364,7 +325,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
       {/* ── Children ── */}
       {open && (
         <div style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 8, position: 'relative' }}>
-          {/* Vertical connector line */}
           <div style={{ position: 'absolute', left: 24, top: 0, bottom: 0, width: 2, background: 'var(--border)' }} />
 
           {goal.children.map(child => (
@@ -374,7 +334,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
               marginLeft: 20, position: 'relative',
               transition: 'opacity 0.2s',
             }}>
-              {/* Connector dot */}
               <div style={{
                 position: 'absolute', left: -24, top: '50%', transform: 'translateY(-50%)',
                 width: 8, height: 8, borderRadius: '50%',
@@ -383,13 +342,11 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
                 flexShrink: 0,
               }} />
 
-              {/* Info */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{child.label}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'JetBrains Mono, monospace' }}>{child.sub}</div>
               </div>
 
-              {/* Progress + status */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 13, color: goal.color, fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>{child.pct}%</div>
@@ -400,14 +357,12 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
                 <StatusBadge status={child.status} />
               </div>
 
-              {/* Edit sub-goal button */}
               <button title="Edit Sub-Goal" onClick={() => setEditSubId(child.id)} style={{ ...btnIcon, flexShrink: 0 }}>
                 <span className="material-symbols-outlined icon-sm">edit</span>
               </button>
             </div>
           ))}
 
-          {/* Add sub-goal inline hint */}
           <button onClick={() => setAddSubOpen(true)} style={{
             marginLeft: 20, display: 'flex', alignItems: 'center', gap: 6,
             color: 'var(--text-muted)', fontSize: 12, fontFamily: 'JetBrains Mono, monospace',
@@ -424,8 +379,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
       )}
 
       {/* ── Modals ── */}
-
-      {/* Edit Parent Goal */}
       {editGoalOpen && (
         <Modal title="Edit Goal" onClose={() => setEditGoalOpen(false)}>
           <GoalForm
@@ -437,7 +390,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
         </Modal>
       )}
 
-      {/* Add Sub-Goal */}
       {addSubOpen && (
         <Modal title="Add Sub-Goal" onClose={() => setAddSubOpen(false)}>
           <SubGoalForm
@@ -448,7 +400,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
         </Modal>
       )}
 
-      {/* Edit Sub-Goal */}
       {editSubId && editingSub && (
         <Modal title="Edit Sub-Goal" onClose={() => setEditSubId(null)}>
           <SubGoalForm
@@ -461,7 +412,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
         </Modal>
       )}
 
-      {/* Confirm delete goal */}
       {confirmDelete === 'goal' && (
         <ConfirmModal
           message={`Delete "${goal.label}" and all its sub-goals? This cannot be undone.`}
@@ -470,7 +420,6 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
         />
       )}
 
-      {/* Confirm delete sub-goal */}
       {typeof confirmDelete === 'number' && (
         <ConfirmModal
           message={`Delete "${goal.children.find(c => c.id === confirmDelete)?.label}"? This cannot be undone.`}
@@ -484,40 +433,140 @@ function GoalNode({ goal, onUpdateGoal, onDeleteGoal, onAddSubGoal, onUpdateSubG
 
 // ─── Root Component ─────────────────────────────────────────────
 export default function GoalTree() {
-  const [goals, setGoals] = useState(INITIAL_GOALS)
+  const [goals, setGoals] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [addGoalOpen, setAddGoalOpen] = useState(false)
 
+  // ── Fetch goals from backend on mount ─────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true)
+        const data = await getGoals()
+        const list = (Array.isArray(data) ? data : []).map(g => ({
+          ...g,
+          label: g.title ?? g.label,
+          children: g.children ? (typeof g.children === 'string' ? JSON.parse(g.children) : g.children) : [],
+          pct: typeof g.pct === 'number' ? g.pct : (g.pct ? Number(g.pct) : 0),
+        }))
+        setGoals(list)
+      } catch (err) {
+        setError(err.message || String(err))
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [])
+
   // ── CRUD helpers ──────────────────────────────────────────────
-  const updateGoal = (goalId, data) =>
-    setGoals(gs => gs.map(g => g.id === goalId ? { ...g, ...data } : g))
 
-  const deleteGoal = (goalId) =>
-    setGoals(gs => gs.filter(g => g.id !== goalId))
+  // Persist parent-goal edits and update local state
+  const updateGoal = async (goalId, data) => {
+    try {
+      // map UI fields to API fields
+      const payload = {
+        title: data.label ?? data.title,
+        description: data.description ?? '',
+        priority: data.priority ?? null,
+        status: data.status ?? 'active',
+        children: JSON.stringify(data.children ?? []),
+        pct: data.pct ?? 0,
+      }
+      const updated = await apiUpdateGoal(goalId, payload)
+      // normalize returned row to UI shape
+      setGoals(gs => gs.map(g => g.id === goalId ? {
+        ...g,
+        label: updated.title ?? payload.title,
+        description: updated.description ?? payload.description,
+        color: updated.color ?? g.color,
+        icon: updated.icon ?? g.icon,
+        children: updated.children ? (typeof updated.children === 'string' ? JSON.parse(updated.children) : updated.children) : (data.children ?? []),
+        pct: typeof updated.pct === 'number' ? updated.pct : payload.pct,
+      } : g))
+    } catch (err) {
+      console.error('Failed to update goal:', err)
+    }
+  }
 
-  const addSubGoal = (goalId, data) =>
-    setGoals(gs => gs.map(g => {
-      if (g.id !== goalId) return g
-      const children = [...g.children, { id: uid(), ...data }]
-      return { ...g, children, pct: calcParentPct(children) }
-    }))
+  // Local-only delete (no DELETE endpoint in the spec)
+  const deleteGoal = async (goalId) => {
+    try {
+      // optimistic update
+      setGoals(gs => gs.filter(g => g.id !== goalId))
+      await fetch(`/api/goals/${goalId}`, { method: 'DELETE' })
+    } catch (err) {
+      console.error('Failed to delete goal:', err)
+    }
+  }
 
-  const updateSubGoal = (goalId, subId, data) =>
-    setGoals(gs => gs.map(g => {
-      if (g.id !== goalId) return g
-      const children = g.children.map(c => c.id === subId ? { ...c, ...data } : c)
-      return { ...g, children, pct: calcParentPct(children) }
-    }))
+  // Persist new sub-goal by saving the whole updated parent goal
+  const addSubGoal = async (goalId, data) => {
+    setGoals(gs => {
+      const next = gs.map(g => {
+        if (g.id !== goalId) return g
+        const children = [...g.children, { id: Date.now(), ...data }]
+        return { ...g, children, pct: calcParentPct(children) }
+      })
+      const parent = next.find(g => g.id === goalId)
+      if (parent) {
+        // persist parent children/pct
+        apiUpdateGoal(goalId, { children: JSON.stringify(parent.children), pct: parent.pct }).catch(console.error)
+      }
+      return next
+    })
+  }
 
-  const deleteSubGoal = (goalId, subId) =>
-    setGoals(gs => gs.map(g => {
-      if (g.id !== goalId) return g
-      const children = g.children.filter(c => c.id !== subId)
-      return { ...g, children, pct: calcParentPct(children) }
-    }))
+  // Persist sub-goal edit by saving the whole updated parent goal
+  const updateSubGoal = async (goalId, subId, data) => {
+    setGoals(gs => {
+      const next = gs.map(g => {
+        if (g.id !== goalId) return g
+        const children = g.children.map(c => c.id === subId ? { ...c, ...data } : c)
+        return { ...g, children, pct: calcParentPct(children) }
+      })
+      const parent = next.find(g => g.id === goalId)
+      if (parent) apiUpdateGoal(goalId, { children: JSON.stringify(parent.children), pct: parent.pct }).catch(console.error)
+      return next
+    })
+  }
 
-  const addGoal = (data) => {
-    setGoals(gs => [...gs, { id: uid(), ...data, children: [] }])
-    setAddGoalOpen(false)
+  // Local-only sub-goal delete, then persist parent
+  const deleteSubGoal = (goalId, subId) => {
+    setGoals(gs => {
+      const next = gs.map(g => {
+        if (g.id !== goalId) return g
+        const children = g.children.filter(c => c.id !== subId)
+        return { ...g, children, pct: calcParentPct(children) }
+      })
+      const parent = next.find(g => g.id === goalId)
+      if (parent) apiUpdateGoal(goalId, { children: JSON.stringify(parent.children), pct: parent.pct }).catch(console.error)
+      return next
+    })
+  }
+
+  // Persist new top-level goal via POST
+  const addGoal = async (data) => {
+    try {
+      const payload = {
+        title: data.label,
+        description: data.description ?? '',
+        priority: data.priority ?? null,
+        children: JSON.stringify([]),
+        pct: data.pct ?? 0,
+      }
+      const created = await createGoal(payload)
+      setGoals(gs => [...gs, {
+        ...created,
+        label: created.title ?? data.label,
+        children: created.children ? (typeof created.children === 'string' ? JSON.parse(created.children) : created.children) : [],
+        pct: typeof created.pct === 'number' ? created.pct : data.pct ?? 0,
+      }])
+    } catch (err) {
+      console.error('Failed to create goal:', err)
+    } finally {
+      setAddGoalOpen(false)
+    }
   }
 
   // ── Summary stats ─────────────────────────────────────────────
@@ -556,30 +605,49 @@ export default function GoalTree() {
         </div>
       </div>
 
+      {/* ── Loading / Error ── */}
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)', fontSize: 14 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 36, marginBottom: 10, display: 'block', opacity: 0.4 }}>hourglass_empty</span>
+          Loading goals…
+        </div>
+      )}
+      {error && (
+        <div style={{
+          padding: '14px 18px', borderRadius: 12, marginBottom: 16,
+          background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)',
+          color: '#f87171', fontSize: 13,
+        }}>
+          Failed to load goals: {error}
+        </div>
+      )}
+
       {/* ── Goal List ── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-        {goals.length === 0 && (
-          <div style={{
-            textAlign: 'center', padding: '60px 20px',
-            border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 16,
-            color: 'var(--text-muted)', fontSize: 14,
-          }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 40, marginBottom: 12, display: 'block', opacity: 0.4 }}>account_tree</span>
-            No goals yet. Add your first goal to get started.
-          </div>
-        )}
-        {goals.map(g => (
-          <GoalNode
-            key={g.id}
-            goal={g}
-            onUpdateGoal={updateGoal}
-            onDeleteGoal={deleteGoal}
-            onAddSubGoal={addSubGoal}
-            onUpdateSubGoal={updateSubGoal}
-            onDeleteSubGoal={deleteSubGoal}
-          />
-        ))}
-      </div>
+      {!loading && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          {goals.length === 0 && !error && (
+            <div style={{
+              textAlign: 'center', padding: '60px 20px',
+              border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 16,
+              color: 'var(--text-muted)', fontSize: 14,
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 40, marginBottom: 12, display: 'block', opacity: 0.4 }}>account_tree</span>
+              No goals yet. Add your first goal to get started.
+            </div>
+          )}
+          {goals.map(g => (
+            <GoalNode
+              key={g.id}
+              goal={g}
+              onUpdateGoal={updateGoal}
+              onDeleteGoal={deleteGoal}
+              onAddSubGoal={addSubGoal}
+              onUpdateSubGoal={updateSubGoal}
+              onDeleteSubGoal={deleteSubGoal}
+            />
+          ))}
+        </div>
+      )}
 
       {/* ── Add Goal Modal ── */}
       {addGoalOpen && (

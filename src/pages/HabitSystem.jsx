@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
+import { getHabits, createHabit, updateHabit } from '../services/api'
 
 // ─── Constants ──────────────────────────────────────────────────
 const WEEK = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
@@ -19,19 +20,6 @@ const COLOR_OPTIONS = [
   { label: 'Rose', value: '#f87171' },
   { label: 'Purple', value: '#c084fc' },
   { label: 'Cyan', value: '#22d3ee' },
-]
-
-let nextId = 10
-
-function uid() { return ++nextId }
-
-const INITIAL_HABITS = [
-  { id: 1, label: 'Morning Routine', icon: 'wb_sunny', color: 'var(--tertiary)', streak: 12, target: '1x daily', time: '06:30', pct: 100, done: true, category: 'Mindset' },
-  { id: 2, label: 'Hydration Protocol', icon: 'water_drop', color: 'var(--secondary)', streak: 8, target: '3L daily', time: 'All day', pct: 100, done: true, category: 'Health' },
-  { id: 3, label: 'Deep Work Blocks', icon: 'work', color: 'var(--primary)', streak: 4, target: '3x daily', time: '09:00', pct: 67, done: false, category: 'Focus' },
-  { id: 4, label: 'Mobility Routine', icon: 'self_improvement', color: 'var(--primary)', streak: 3, target: '1x daily', time: '18:00', pct: 0, done: false, category: 'Health' },
-  { id: 5, label: 'Evening Review', icon: 'menu_book', color: 'var(--secondary)', streak: 9, target: '1x daily', time: '21:00', pct: 0, done: false, category: 'Mindset' },
-  { id: 6, label: 'Cold Exposure', icon: 'ac_unit', color: 'var(--secondary)', streak: 2, target: '1x daily', time: '07:00', pct: 100, done: true, category: 'Health' },
 ]
 
 // generate stable week data per habit id
@@ -160,14 +148,12 @@ function HabitForm({ initial, onSave, onDelete, onClose }) {
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        {/* Label */}
         <div>
           <label style={labelStyle}>Habit Name</label>
           <input style={inputStyle} value={label} placeholder="e.g. Morning Routine"
             onChange={e => setLabel(e.target.value)} autoFocus />
         </div>
 
-        {/* Target + Time row */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label style={labelStyle}>Target</label>
@@ -181,7 +167,6 @@ function HabitForm({ initial, onSave, onDelete, onClose }) {
           </div>
         </div>
 
-        {/* Streak + Progress row */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label style={labelStyle}>Streak (days)</label>
@@ -196,7 +181,6 @@ function HabitForm({ initial, onSave, onDelete, onClose }) {
           </div>
         </div>
 
-        {/* Category */}
         <div>
           <label style={labelStyle}>Category</label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -212,7 +196,6 @@ function HabitForm({ initial, onSave, onDelete, onClose }) {
           </div>
         </div>
 
-        {/* Icon */}
         <div>
           <label style={labelStyle}>Icon</label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -230,7 +213,6 @@ function HabitForm({ initial, onSave, onDelete, onClose }) {
           </div>
         </div>
 
-        {/* Color */}
         <div>
           <label style={labelStyle}>Color</label>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -250,7 +232,6 @@ function HabitForm({ initial, onSave, onDelete, onClose }) {
         </div>
       </div>
 
-      {/* Actions */}
       <div style={{ display: 'flex', gap: 8, marginTop: 24 }}>
         {onDelete && (
           <button style={btnDanger} onClick={onDelete}>
@@ -277,15 +258,13 @@ function HabitRow({ habit, weekRow, onEdit, onToggle }) {
       transition: 'border-color 0.3s, opacity 0.3s',
       opacity: habit.done ? 0.82 : 1,
     }}>
-      {/* Circle */}
       <div style={{ position: 'relative', flexShrink: 0 }}>
         <CircleProgress pct={habit.done ? 100 : habit.pct} color={habit.color} />
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span className="material-symbols-outlined icon-sm" style={{ color: habit.color, fontSize: 14 }}>{habit.icon}</span>
+          <span className="material-symbols-outlined icon-sm" style={{ color: habit.color, fontSize: 16, lineHeight: 1 }}>{habit.icon}</span>
         </div>
       </div>
 
-      {/* Info */}
       <div style={{ flex: 1, minWidth: 120 }}>
         <div style={{
           fontWeight: 600, fontSize: 14, color: 'var(--text)',
@@ -308,7 +287,6 @@ function HabitRow({ habit, weekRow, onEdit, onToggle }) {
         </div>
       </div>
 
-      {/* Weekly dots */}
       <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
         {weekRow.map((done, i) => (
           <div key={i} style={{
@@ -320,7 +298,6 @@ function HabitRow({ habit, weekRow, onEdit, onToggle }) {
         ))}
       </div>
 
-      {/* Edit button */}
       <button
         title="Edit habit"
         onClick={() => onEdit(habit)}
@@ -331,7 +308,6 @@ function HabitRow({ habit, weekRow, onEdit, onToggle }) {
         <span className="material-symbols-outlined icon-sm">edit</span>
       </button>
 
-      {/* Done toggle */}
       <button
         onClick={() => onToggle(habit.id)}
         style={{
@@ -353,44 +329,131 @@ function HabitRow({ habit, weekRow, onEdit, onToggle }) {
 
 // ─── Root Component ──────────────────────────────────────────────
 export default function HabitSystem() {
-  const [habits, setHabits] = useState(INITIAL_HABITS)
-  const [weekRows] = useState(() => {
-    const map = {}
-    INITIAL_HABITS.forEach(h => { map[h.id] = makeWeekRow(h.id) })
-    return map
-  })
-  const [weekRowsState, setWeekRowsState] = useState(weekRows)
+  const [habits, setHabits] = useState([])
+  const [weekRowsState, setWeekRowsState] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   const [filter, setFilter] = useState('All')
   const [addOpen, setAddOpen] = useState(false)
-  const [editHabit, setEditHabit] = useState(null)        // habit being edited
+  const [editHabit, setEditHabit] = useState(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
+  // ── Fetch habits on mount ─────────────────────────────────────
+  // The spec provides GET /api/habits/:goalId, but no single "all habits"
+  // endpoint. We pass goalId=all as a common convention; adjust if your
+  // backend uses a different route for listing all habits.
+  useEffect(() => {
+    getHabits('all')
+      .then(data => {
+        const normalized = data.map(h => ({ ...h, label: h.label ?? h.title }))
+        setHabits(normalized)
+        const rows = {}
+        normalized.forEach(h => { rows[h.id] = makeWeekRow(h.id) })
+        setWeekRowsState(rows)
+      })
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [])
+
   // ── CRUD ──────────────────────────────────────────────────────
-  const addHabit = (data) => {
-    const id = uid()
-    setHabits(hs => [...hs, { id, ...data }])
-    setWeekRowsState(wr => ({ ...wr, [id]: makeWeekRow(id) }))
-    setAddOpen(false)
+
+  const addHabit = async (data) => {
+    try {
+      const payload = {
+        title: data.label,
+        description: data.description ?? '',
+        frequency: data.target ?? data.frequency ?? null,
+        goalId: data.goalId ?? null,
+        icon: data.icon ?? null,
+        color: data.color ?? null,
+        target: data.target ?? null,
+        time: data.time ?? null,
+        category: data.category ?? null,
+        streak: data.streak ?? 0,
+        pct: data.pct ?? 0,
+        done: data.done ? 1 : 0,
+      }
+      const created = await createHabit(payload)
+      const normalized = { ...created, label: created.label ?? created.title }
+      setHabits(hs => [...hs, normalized])
+      setWeekRowsState(wr => ({ ...wr, [normalized.id]: makeWeekRow(normalized.id) }))
+    } catch (err) {
+      console.error('Failed to create habit:', err)
+    } finally {
+      setAddOpen(false)
+    }
   }
 
-  const saveEdit = (data) => {
-    setHabits(hs => hs.map(h => h.id === editHabit.id ? { ...h, ...data } : h))
-    setEditHabit(null)
+  // Edit is local-only (no PATCH /habits/:id in the spec); persist via
+  // createHabit if your backend supports upsert, or wire to a new endpoint.
+  const saveEdit = async (data) => {
+    try {
+      const payload = {
+        title: data.label,
+        description: data.description ?? '',
+        frequency: data.target ?? data.frequency ?? null,
+        icon: data.icon ?? null,
+        color: data.color ?? null,
+        target: data.target ?? null,
+        time: data.time ?? null,
+        category: data.category ?? null,
+        streak: data.streak ?? 0,
+        pct: data.pct ?? 0,
+        done: data.done ? 1 : 0,
+      }
+      const updated = await updateHabit(editHabit.id, payload)
+      const normalized = { ...updated, label: updated.label ?? updated.title }
+      setHabits(hs => hs.map(h => h.id === editHabit.id ? normalized : h))
+    } catch (err) {
+      console.error('Failed to update habit:', err)
+    } finally {
+      setEditHabit(null)
+    }
   }
 
-  const deleteHabit = (id) => {
-    setHabits(hs => hs.filter(h => h.id !== id))
-    setWeekRowsState(wr => { const n = { ...wr }; delete n[id]; return n })
-    setConfirmDeleteId(null)
-    setEditHabit(null)
+  const deleteHabit = async (id) => {
+    try {
+      await fetch(`/api/habits/${id}`, { method: 'DELETE' })
+      setHabits(hs => hs.filter(h => h.id !== id))
+      setWeekRowsState(wr => { const n = { ...wr }; delete n[id]; return n })
+      setConfirmDeleteId(null)
+      setEditHabit(null)
+    } catch (err) {
+      console.error('Failed to delete habit:', err)
+    }
   }
 
-  const toggleDone = (id) => {
-    setHabits(hs => hs.map(h => h.id === id
-      ? { ...h, done: !h.done, pct: !h.done ? 100 : 0 }
-      : h
-    ))
+  const toggleDone = async (id) => {
+    const current = habits.find(h => h.id === id)
+    if (!current) return
+
+    const updatedHabit = {
+      ...current,
+      done: current.done ? 0 : 1,
+      pct: current.done ? 0 : 100,
+    }
+
+    setHabits(hs => hs.map(h => h.id === id ? updatedHabit : h))
+
+    try {
+      const persisted = await updateHabit(id, {
+        title: updatedHabit.label ?? updatedHabit.title,
+        description: updatedHabit.description ?? '',
+        frequency: updatedHabit.frequency ?? updatedHabit.target ?? null,
+        icon: updatedHabit.icon ?? null,
+        color: updatedHabit.color ?? null,
+        target: updatedHabit.target ?? null,
+        time: updatedHabit.time ?? null,
+        category: updatedHabit.category ?? null,
+        streak: updatedHabit.streak ?? 0,
+        pct: updatedHabit.pct ?? 0,
+        done: updatedHabit.done ? 1 : 0,
+      })
+      setHabits(hs => hs.map(h => h.id === id ? persisted : h))
+    } catch (err) {
+      console.error('Failed to persist habit done:', err)
+    }
   }
 
   // ── Derived ───────────────────────────────────────────────────
@@ -445,31 +508,50 @@ export default function HabitSystem() {
         ))}
       </div>
 
+      {/* ── Loading / Error ── */}
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-muted)', fontSize: 14 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 36, marginBottom: 10, display: 'block', opacity: 0.4 }}>hourglass_empty</span>
+          Loading habits…
+        </div>
+      )}
+      {error && (
+        <div style={{
+          padding: '14px 18px', borderRadius: 12, marginBottom: 16,
+          background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)',
+          color: '#f87171', fontSize: 13,
+        }}>
+          Failed to load habits: {error}
+        </div>
+      )}
+
       {/* ── Habit List ── */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {filtered.length === 0 && (
-          <div style={{
-            textAlign: 'center', padding: '48px 20px',
-            border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 14,
-            color: 'var(--text-muted)', fontSize: 14,
-          }}>
-            <span className="material-symbols-outlined" style={{ fontSize: 36, marginBottom: 10, display: 'block', opacity: 0.35 }}>
-              {filter === 'All' ? 'check_circle' : 'filter_list'}
-            </span>
-            {filter === 'All' ? 'No habits yet. Create your first habit!' : `No habits in "${filter}".`}
-          </div>
-        )}
-        {filtered.map((h, i) => (
-          <div key={h.id} className={`fade-up d${Math.min(i + 1, 5)}`}>
-            <HabitRow
-              habit={h}
-              weekRow={weekRowsState[h.id] ?? makeWeekRow(h.id)}
-              onEdit={setEditHabit}
-              onToggle={toggleDone}
-            />
-          </div>
-        ))}
-      </div>
+      {!loading && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {filtered.length === 0 && !error && (
+            <div style={{
+              textAlign: 'center', padding: '48px 20px',
+              border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 14,
+              color: 'var(--text-muted)', fontSize: 14,
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: 36, marginBottom: 10, display: 'block', opacity: 0.35 }}>
+                {filter === 'All' ? 'check_circle' : 'filter_list'}
+              </span>
+              {filter === 'All' ? 'No habits yet. Create your first habit!' : `No habits in "${filter}".`}
+            </div>
+          )}
+          {filtered.map((h, i) => (
+            <div key={h.id} className={`fade-up d${Math.min(i + 1, 5)}`}>
+              <HabitRow
+                habit={h}
+                weekRow={weekRowsState[h.id] ?? makeWeekRow(h.id)}
+                onEdit={setEditHabit}
+                onToggle={toggleDone}
+              />
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Stats Row ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginTop: 24 }}>

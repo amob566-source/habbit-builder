@@ -1,4 +1,67 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+
+const BASE_URL = 'http://localhost:3001'
+
+async function getTasks() {
+  const res = await fetch(`${BASE_URL}/api/tasks`)
+  if (!res.ok) throw new Error('Failed to fetch tasks')
+  return res.json()
+}
+
+async function getGoals() {
+  const res = await fetch(`${BASE_URL}/api/goals`)
+  if (!res.ok) throw new Error('Failed to fetch goals')
+  return res.json()
+}
+
+async function generateAISequence() {
+  const res = await fetch(`${BASE_URL}/api/ai/generate-sequence`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to generate AI sequence')
+  return res.json()
+}
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function getGreeting() {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function getDayLabel() {
+  return new Date().toLocaleDateString(undefined, { weekday: 'long' })
+}
+
+// Map a backend task to the props HabitItem expects
+function taskToHabitProps(task) {
+  const completed = !!task.completed || task.status === 'done'
+  const active = task.status === 'active' || task.status === 'in_progress'
+  const pct = completed ? 100 : task.progress ?? (active ? 50 : 0)
+  const sub = completed
+    ? `Completed${task.completedAt ? ' · ' + new Date(task.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`
+    : task.scheduledAt
+      ? `Scheduled ${new Date(task.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : task.description ?? ''
+  return {
+    id: task.id,
+    label: task.title,
+    status: completed ? 'done' : active ? 'active' : 'pending',
+    pct,
+    sub,
+  }
+}
+
+// Derive summary stats from a tasks array
+function buildStats(tasks) {
+  const done = tasks.filter(t => t.completed || t.status === 'done').length
+  const total = tasks.length
+  const focusHrs = tasks.reduce((acc, t) => acc + (t.focusMinutes ?? 0), 0) / 60
+  return { done, total, focusHrs }
+}
+
+// ─── sub-components ──────────────────────────────────────────────────────────
 
 function CircleProgress({ pct, size = 40, strokeWidth = 3, color = 'var(--primary)' }) {
   const r = (size - strokeWidth * 2) / 2
@@ -6,8 +69,8 @@ function CircleProgress({ pct, size = 40, strokeWidth = 3, color = 'var(--primar
   const offset = circ * (1 - pct / 100)
   return (
     <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', flexShrink: 0 }}>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={strokeWidth} />
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color}
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={strokeWidth} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color}
         strokeWidth={strokeWidth} strokeLinecap="round"
         strokeDasharray={circ} strokeDashoffset={offset}
         style={{ transition: 'stroke-dashoffset 0.6s ease' }} />
@@ -15,16 +78,21 @@ function CircleProgress({ pct, size = 40, strokeWidth = 3, color = 'var(--primar
   )
 }
 
-function HabitItem({ icon, label, status, pct, sub, action }) {
+function HabitItem({ id, label, status, pct, sub, action, onClick }) {
   const done = status === 'done'
   const active = status === 'active'
   return (
-    <div className="card fade-up d2" style={{
-      display: 'flex', alignItems: 'center', gap: 14,
-      borderLeft: active ? '3px solid var(--primary)' : done ? '3px solid transparent' : undefined,
-      opacity: done ? 0.55 : 1,
-      position: 'relative', overflow: 'hidden',
-    }}>
+    <div
+      className="card fade-up d2"
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 14,
+        borderLeft: active ? '3px solid var(--primary)' : done ? '3px solid transparent' : undefined,
+        opacity: done ? 0.55 : 1,
+        position: 'relative', overflow: 'hidden',
+        cursor: onClick ? 'pointer' : 'default',
+      }}
+    >
       {active && <div style={{
         position: 'absolute', left: 0, top: 0, bottom: 0, width: 60,
         background: 'linear-gradient(to right, rgba(78,222,163,0.08), transparent)',
@@ -42,13 +110,78 @@ function HabitItem({ icon, label, status, pct, sub, action }) {
         <div style={{ font: 'var(--text-label-sm)', color: active ? 'var(--primary)' : 'var(--text-muted)', marginTop: 2 }}>{sub}</div>
       </div>
       {action && (
-        <button className="btn btn-ghost" style={{ fontSize: 11, padding: '6px 12px', flexShrink: 0 }}>{action}</button>
+        <button
+          className="btn btn-ghost"
+          style={{ fontSize: 11, padding: '6px 12px', flexShrink: 0 }}
+          onClick={e => { e.stopPropagation(); onClick && onClick() }}
+        >{action}</button>
       )}
     </div>
   )
 }
 
+// ─── main component ───────────────────────────────────────────────────────────
+
 export default function Dashboard() {
+  const navigate = useNavigate()
+
+  const [tasks, setTasks] = useState([])
+  const [goals, setGoals] = useState([])
+  const [aiSequence, setAiSequence] = useState(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [streak, setStreak] = useState(0)
+
+  useEffect(() => {
+    Promise.allSettled([getTasks(), getGoals()])
+      .then(([tasksRes, goalsRes]) => {
+        if (tasksRes.status === 'fulfilled') setTasks(tasksRes.value ?? [])
+        if (goalsRes.status === 'fulfilled') setGoals(goalsRes.value ?? [])
+        setLoading(false)
+      })
+  }, [])
+
+  function handleAIOverview() {
+    setAiLoading(true)
+    generateAISequence()
+      .then(data => setAiSequence(data))
+      .catch(err => console.error('AI sequence error:', err))
+      .finally(() => setAiLoading(false))
+  }
+
+  function handleTaskClick(taskId) {
+    if (taskId) navigate(`/focus/${taskId}`)
+  }
+
+  // Derived display data
+  const stats = buildStats(tasks)
+  const habitProps = tasks.map(taskToHabitProps)
+
+  // AI insights: prefer backend response, otherwise show static fallback
+  const insights = aiSequence?.insights ?? [
+    { color: 'var(--secondary)', text: 'You tend to experience a 15% drop in focus retention after 2PM. Consider scheduling low-cognitive tasks next.' },
+    { color: 'var(--primary)', text: 'Consistent completion of Morning Routine nodes is correlating strongly with higher daily Momentum scores (+12%).' },
+  ]
+
+  // Sequence items: prefer backend response, otherwise show static fallback
+  const sequenceItems = aiSequence?.sequence ?? [
+    { time: '14:00 – 15:30', label: 'Deep Work: Architecture', active: true },
+    { time: '16:00 – 16:30', label: 'System Review', active: false },
+    { time: '18:00 – 18:30', label: 'Mobility Routine', active: false },
+  ]
+
+  const momentumScore = aiSequence?.momentumScore ?? Math.round((stats.done / Math.max(stats.total, 1)) * 100)
+  const energyPct = aiSequence?.energyPct ?? momentumScore
+  const energyLabel = energyPct >= 80 ? 'Optimal' : energyPct >= 50 ? 'Moderate' : 'Low'
+  const energyDesc = aiSequence?.energyDesc ?? 'Energy levels are stable. Ideal conditions for executing remaining Deep Work block.'
+
+  const statCards = [
+    { label: 'Momentum Score', value: String(momentumScore), unit: '%', color: 'var(--primary)', icon: 'trending_up' },
+    { label: 'Habits Done', value: String(stats.done), unit: `/${stats.total || 5}`, color: 'var(--secondary)', icon: 'check_circle' },
+    { label: 'Focus Time', value: stats.focusHrs > 0 ? stats.focusHrs.toFixed(1) : '—', unit: 'hrs', color: 'var(--tertiary)', icon: 'timer' },
+    { label: 'Streak', value: String(streak || 4), unit: 'days', color: 'var(--tertiary)', icon: 'local_fire_department' },
+  ]
+
   return (
     <main className="page page-enter" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Header */}
@@ -57,27 +190,27 @@ export default function Dashboard() {
           <div>
             <div className="badge badge-primary" style={{ marginBottom: 10 }}>
               <span className="material-symbols-outlined icon-sm icon-fill">local_fire_department</span>
-              4 Day Streak
+              {streak || 4} Day Streak
             </div>
-            <h1 className="page-title">Good afternoon, User</h1>
-            <p className="page-subtitle">Thursday · System Status: Optimal</p>
+            <h1 className="page-title">{getGreeting()}, User</h1>
+            <p className="page-subtitle">{getDayLabel()} · System Status: {loading ? 'Loading…' : 'Optimal'}</p>
           </div>
-          <button className="btn btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            className="btn btn-ghost"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={handleAIOverview}
+            disabled={aiLoading}
+          >
             <span className="material-symbols-outlined icon-sm">auto_awesome</span>
-            AI Overview
+            {aiLoading ? 'Generating…' : 'AI Overview'}
           </button>
         </div>
       </div>
 
       {/* Momentum + stats row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-        {[
-          { label: 'Momentum Score', value: '78', unit: '%', color: 'var(--primary)', icon: 'trending_up' },
-          { label: 'Habits Done', value: '3', unit: '/5', color: 'var(--secondary)', icon: 'check_circle' },
-          { label: 'Focus Time', value: '4.5', unit: 'hrs', color: 'var(--tertiary)', icon: 'timer' },
-          { label: 'Streak', value: '4', unit: 'days', color: 'var(--tertiary)', icon: 'local_fire_department' },
-        ].map((s, i) => (
-          <div key={s.label} className={`card fade-up d${i+1}`} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {statCards.map((s, i) => (
+          <div key={s.label} className={`card fade-up d${i + 1}`} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <span style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.label}</span>
               <span className="material-symbols-outlined icon-sm" style={{ color: s.color }}>{s.icon}</span>
@@ -94,15 +227,31 @@ export default function Dashboard() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr minmax(260px, 360px)', gap: 20, alignItems: 'start' }}>
         {/* Left */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
-          {/* Today's Habits */}
+          {/* Today's Habits / Tasks */}
           <section>
             <div className="card-title fade-up"><span className="material-symbols-outlined icon-sm">checklist</span> Today's Habits</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <HabitItem label="Morning Routine" status="done" pct={100} sub="Completed · 06:30" />
-              <HabitItem label="Hydration Protocol" status="done" pct={100} sub="3/3 Liters completed" />
-              <HabitItem label="Deep Work Blocks" status="active" pct={60} sub="In progress · 2/3 Sessions" action="Log Session" />
-              <HabitItem label="Mobility Routine" status="pending" pct={0} sub="0/1 Session · Scheduled 18:00" />
-              <HabitItem label="Evening Review" status="pending" pct={0} sub="Scheduled 21:00" />
+              {loading ? (
+                <div className="card fade-up d2" style={{ color: 'var(--text-muted)', font: 'var(--text-body)' }}>Loading tasks…</div>
+              ) : habitProps.length > 0 ? (
+                habitProps.map(h => (
+                  <HabitItem
+                    key={h.id}
+                    {...h}
+                    action={h.status === 'active' ? 'Focus' : undefined}
+                    onClick={() => handleTaskClick(h.id)}
+                  />
+                ))
+              ) : (
+                // Static fallback when backend has no tasks yet
+                <>
+                  <HabitItem label="Morning Routine" status="done" pct={100} sub="Completed · 06:30" />
+                  <HabitItem label="Hydration Protocol" status="done" pct={100} sub="3/3 Liters completed" />
+                  <HabitItem label="Deep Work Blocks" status="active" pct={60} sub="In progress · 2/3 Sessions" action="Log Session" />
+                  <HabitItem label="Mobility Routine" status="pending" pct={0} sub="0/1 Session · Scheduled 18:00" />
+                  <HabitItem label="Evening Review" status="pending" pct={0} sub="Scheduled 21:00" />
+                </>
+              )}
             </div>
           </section>
 
@@ -110,12 +259,12 @@ export default function Dashboard() {
           <div className="card fade-up d3">
             <div className="card-title"><span className="material-symbols-outlined icon-sm">battery_charging_full</span> System Energy</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ font: 'var(--text-h3)', color: 'var(--text)' }}>Optimal</span>
-              <span style={{ font: 'var(--text-mono)', color: 'var(--primary)' }}>78%</span>
+              <span style={{ font: 'var(--text-h3)', color: 'var(--text)' }}>{energyLabel}</span>
+              <span style={{ font: 'var(--text-mono)', color: 'var(--primary)' }}>{energyPct}%</span>
             </div>
-            <div className="progress-bar"><div className="progress-bar-fill" style={{ width: '78%' }} /></div>
+            <div className="progress-bar"><div className="progress-bar-fill" style={{ width: `${energyPct}%` }} /></div>
             <p style={{ font: 'var(--text-body)', color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.6 }}>
-              Energy levels are stable. Ideal conditions for executing remaining Deep Work block.
+              {energyDesc}
             </p>
           </div>
         </div>
@@ -126,20 +275,21 @@ export default function Dashboard() {
           <div className="card glass fade-up d2" style={{ position: 'relative', overflow: 'hidden' }}>
             <div style={{ position: 'absolute', top: -24, right: -24, width: 96, height: 96, background: 'rgba(173,198,255,0.06)', borderRadius: '50%', filter: 'blur(24px)', pointerEvents: 'none' }} />
             <div className="card-title" style={{ color: 'var(--secondary)' }}><span className="material-symbols-outlined icon-sm">psychology</span> Nexus Insights</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {[
-                { color: 'var(--secondary)', text: 'You tend to experience a 15% drop in focus retention after 2PM. Consider scheduling low-cognitive tasks next.' },
-                { color: 'var(--primary)', text: 'Consistent completion of Morning Routine nodes is correlating strongly with higher daily Momentum scores (+12%).' },
-              ].map((ins, i) => (
-                <div key={i}>
-                  {i > 0 && <div className="divider" style={{ marginBottom: 14 }} />}
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                    <div style={{ marginTop: 5, width: 7, height: 7, borderRadius: '50%', background: ins.color, flexShrink: 0, boxShadow: `0 0 8px ${ins.color}99` }} />
-                    <p style={{ font: 'var(--text-body)', color: 'var(--text)', lineHeight: 1.6 }}>{ins.text}</p>
+            {aiLoading ? (
+              <p style={{ font: 'var(--text-body)', color: 'var(--text-muted)' }}>Generating insights…</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {insights.map((ins, i) => (
+                  <div key={i}>
+                    {i > 0 && <div className="divider" style={{ marginBottom: 14 }} />}
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <div style={{ marginTop: 5, width: 7, height: 7, borderRadius: '50%', background: ins.color, flexShrink: 0, boxShadow: `0 0 8px ${ins.color}99` }} />
+                      <p style={{ font: 'var(--text-body)', color: 'var(--text)', lineHeight: 1.6 }}>{ins.text}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Upcoming Sequence */}
@@ -147,15 +297,15 @@ export default function Dashboard() {
             <div className="card-title"><span className="material-symbols-outlined icon-sm">schedule</span> Upcoming Sequence</div>
             <div style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
               <div style={{ position: 'absolute', left: 10, top: 4, bottom: 4, width: 2, background: 'var(--border)' }} />
-              {[
-                { time: '14:00 – 15:30', label: 'Deep Work: Architecture', active: true },
-                { time: '16:00 – 16:30', label: 'System Review', active: false },
-                { time: '18:00 – 18:30', label: 'Mobility Routine', active: false },
-              ].map((item, i) => (
-                <div key={i} style={{ display: 'flex', gap: 16, padding: '10px 0', alignItems: 'flex-start', position: 'relative', zIndex: 1 }}>
+              {sequenceItems.map((item, i) => (
+                <div
+                  key={i}
+                  style={{ display: 'flex', gap: 16, padding: '10px 0', alignItems: 'flex-start', position: 'relative', zIndex: 1, cursor: item.taskId ? 'pointer' : 'default' }}
+                  onClick={() => item.taskId && handleTaskClick(item.taskId)}
+                >
                   <div style={{
                     width: 22, height: 22, borderRadius: '50%', flexShrink: 0, marginTop: 1,
-                    background: item.active ? 'var(--surface-lowest)' : 'var(--surface-lowest)',
+                    background: 'var(--surface-lowest)',
                     border: `2px solid ${item.active ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>

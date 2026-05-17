@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 
+const BASE_URL = 'http://localhost:3001'
+
+async function getAnalytics() {
+  const res = await fetch(`${BASE_URL}/api/analytics`)
+  if (!res.ok) throw new Error('Failed to fetch analytics')
+  return res.json()
+}
+
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-const BAR_DATA = [
+// Fallback static data used when the backend hasn't returned anything yet
+const FALLBACK_BAR_DATA = [
   { deep: 72, recovery: 60, momentum: 55 },
   { deep: 85, recovery: 70, momentum: 80 },
   { deep: 60, recovery: 80, momentum: 65 },
@@ -12,12 +21,113 @@ const BAR_DATA = [
   { deep: 30, recovery: 95, momentum: 40 },
 ]
 
-const HEATMAP = [
+const FALLBACK_HEATMAP = [
   [0, 1, 3, 4, 5, 0, 0],
   [2, 4, 5, 3, 2, 0, 1],
   [1, 2, 3, 4, 5, 4, 2],
   [0, 1, 2, 3, 4, 2, 0],
 ]
+
+const FALLBACK_METRICS = [
+  { label: 'Focus Score', value: 87, delta: '+5', color: 'var(--primary)', icon: 'psychology' },
+  { label: 'Consistency', value: 78, delta: '+12', color: 'var(--secondary)', icon: 'insights' },
+  { label: 'Recovery Rate', value: 92, delta: '+3', color: 'var(--tertiary)', icon: 'battery_charging_full' },
+  { label: 'Output Quality', value: 74, delta: '+8', color: 'var(--primary)', icon: 'star' },
+]
+
+const TIMELINE = [
+  { label: 'Foundation', time: 'Q1', done: true },
+  { label: 'System Build', time: 'Q2', done: true },
+  { label: 'Deep Focus', time: 'In Progress', current: true },
+  { label: 'Mastery', time: 'Locked', locked: true },
+]
+
+// Maps a raw daily-completed count (0–N) to a 0–5 heatmap intensity bucket
+function countToHeatVal(count) {
+  if (count === 0) return 0
+  if (count === 1) return 1
+  if (count === 2) return 2
+  if (count === 3) return 3
+  if (count === 4) return 4
+  return 5
+}
+
+// Build a 4×7 heatmap grid from an array of { date, completed } objects
+// The most recent 28 days are used, oldest first, row-major (4 weeks × 7 days)
+function buildHeatmap(dailyData) {
+  if (!dailyData || dailyData.length === 0) return FALLBACK_HEATMAP
+  const cells = dailyData.slice(-28).map(d => countToHeatVal(d.completed ?? d.count ?? 0))
+  // Pad to exactly 28 cells
+  while (cells.length < 28) cells.unshift(0)
+  const rows = []
+  for (let r = 0; r < 4; r++) rows.push(cells.slice(r * 7, r * 7 + 7))
+  return rows
+}
+
+// Build bar chart data from daily data (last 7 days)
+function buildBarData(dailyData) {
+  if (!dailyData || dailyData.length === 0) return FALLBACK_BAR_DATA
+  return dailyData.slice(-7).map(d => {
+    const completed = d.completed ?? d.count ?? 0
+    const total = d.total ?? Math.max(completed, 5)
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0
+    return {
+      deep: pct,
+      recovery: Math.min(100, Math.round(pct * 0.85 + 10)),
+      momentum: Math.min(100, Math.round(pct * 0.9 + 5)),
+    }
+  })
+}
+
+// Map backend metric fields to the card structure
+function buildMetrics(data) {
+  if (!data) return FALLBACK_METRICS
+
+  const {
+    focusScore,
+    consistency,
+    recoveryRate,
+    outputQuality,
+    focusDelta,
+    consistencyDelta,
+    recoveryDelta,
+    outputDelta,
+  } = data
+
+  const fmt = v => (v !== undefined && v !== null ? Math.round(v) : null)
+  const fmtDelta = v => (v !== undefined && v !== null ? (v >= 0 ? `+${Math.round(v)}` : `${Math.round(v)}`) : null)
+
+  return [
+    {
+      label: 'Focus Score',
+      value: fmt(focusScore) ?? FALLBACK_METRICS[0].value,
+      delta: fmtDelta(focusDelta) ?? FALLBACK_METRICS[0].delta,
+      color: 'var(--primary)',
+      icon: 'psychology',
+    },
+    {
+      label: 'Consistency',
+      value: fmt(consistency) ?? FALLBACK_METRICS[1].value,
+      delta: fmtDelta(consistencyDelta) ?? FALLBACK_METRICS[1].delta,
+      color: 'var(--secondary)',
+      icon: 'insights',
+    },
+    {
+      label: 'Recovery Rate',
+      value: fmt(recoveryRate) ?? FALLBACK_METRICS[2].value,
+      delta: fmtDelta(recoveryDelta) ?? FALLBACK_METRICS[2].delta,
+      color: 'var(--tertiary)',
+      icon: 'battery_charging_full',
+    },
+    {
+      label: 'Output Quality',
+      value: fmt(outputQuality) ?? FALLBACK_METRICS[3].value,
+      delta: fmtDelta(outputDelta) ?? FALLBACK_METRICS[3].delta,
+      color: 'var(--primary)',
+      icon: 'star',
+    },
+  ]
+}
 
 function HeatCell({ val, delay }) {
   const colors = [
@@ -55,21 +165,32 @@ function BarGroup({ data, i }) {
   )
 }
 
-const TIMELINE = [
-  { label: 'Foundation', time: 'Q1', done: true },
-  { label: 'System Build', time: 'Q2', done: true },
-  { label: 'Deep Focus', time: 'In Progress', current: true },
-  { label: 'Mastery', time: 'Locked', locked: true },
-]
-
-const METRICS = [
-  { label: 'Focus Score', value: 87, delta: '+5', color: 'var(--primary)', icon: 'psychology' },
-  { label: 'Consistency', value: 78, delta: '+12', color: 'var(--secondary)', icon: 'insights' },
-  { label: 'Recovery Rate', value: 92, delta: '+3', color: 'var(--tertiary)', icon: 'battery_charging_full' },
-  { label: 'Output Quality', value: 74, delta: '+8', color: 'var(--primary)', icon: 'star' },
-]
-
 export default function Analytics() {
+  const [analyticsData, setAnalyticsData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    getAnalytics()
+      .then(data => {
+        setAnalyticsData(data)
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error('Analytics fetch error:', err)
+        setError(err.message)
+        setLoading(false)
+      })
+  }, [])
+
+  // Derive display data from backend response (or fall back gracefully)
+  const metrics = buildMetrics(analyticsData)
+  const barData = buildBarData(analyticsData?.daily)
+  const heatmap = buildHeatmap(analyticsData?.daily)
+
+  // Completed tasks list from backend (if provided)
+  const recentCompleted = analyticsData?.recentCompleted ?? []
+
   return (
     <main className="page page-enter" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div className="page-header fade-up">
@@ -78,7 +199,13 @@ export default function Analytics() {
             <h1 className="page-title">Analytics</h1>
             <p className="page-subtitle">Growth metrics & performance data</p>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {loading && (
+              <span style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', marginRight: 8 }}>Loading…</span>
+            )}
+            {error && !loading && (
+              <span style={{ font: 'var(--text-label-sm)', color: 'rgba(255,100,100,0.8)', marginRight: 8 }}>Using cached data</span>
+            )}
             <button className="btn btn-ghost" style={{ fontSize: 11 }}>7D</button>
             <button className="btn btn-primary" style={{ fontSize: 11 }}>30D</button>
             <button className="btn btn-ghost" style={{ fontSize: 11 }}>All</button>
@@ -88,8 +215,8 @@ export default function Analytics() {
 
       {/* Metric cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-        {METRICS.map((m, i) => (
-          <div key={m.label} className={`card fade-up d${i+1}`} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {metrics.map((m, i) => (
+          <div key={m.label} className={`card fade-up d${i + 1}`} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{m.label}</span>
               <span className="material-symbols-outlined icon-sm" style={{ color: m.color }}>{m.icon}</span>
@@ -114,7 +241,7 @@ export default function Analytics() {
         <div className="card glass fade-up d2">
           <div className="card-title"><span className="material-symbols-outlined icon-sm">grid_view</span> Activity Heatmap</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
-            {HEATMAP.flat().map((val, idx) => (
+            {heatmap.flat().map((val, idx) => (
               <HeatCell key={idx} val={val} delay={idx * 0.03} />
             ))}
           </div>
@@ -125,8 +252,8 @@ export default function Analytics() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
             <span style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)' }}>Low</span>
-            {[0,1,2,3,4,5].map(v => (
-              <div key={v} style={{ width: 10, height: 10, borderRadius: 3, background: ['rgba(34,34,34,1)','rgba(78,222,163,0.14)','rgba(78,222,163,0.32)','rgba(78,222,163,0.52)','rgba(78,222,163,0.74)','#4edea3'][v] }} />
+            {[0, 1, 2, 3, 4, 5].map(v => (
+              <div key={v} style={{ width: 10, height: 10, borderRadius: 3, background: ['rgba(34,34,34,1)', 'rgba(78,222,163,0.14)', 'rgba(78,222,163,0.32)', 'rgba(78,222,163,0.52)', 'rgba(78,222,163,0.74)', '#4edea3'][v] }} />
             ))}
             <span style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)' }}>High</span>
           </div>
@@ -137,7 +264,7 @@ export default function Analytics() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 8 }}>
             <div className="card-title" style={{ margin: 0 }}><span className="material-symbols-outlined icon-sm">bar_chart</span> Weekly Performance</div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              {[['Deep Work','var(--primary)'],['Recovery','var(--secondary)'],['Momentum','var(--tertiary)']].map(([l,c]) => (
+              {[['Deep Work', 'var(--primary)'], ['Recovery', 'var(--secondary)'], ['Momentum', 'var(--tertiary)']].map(([l, c]) => (
                 <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 5, font: 'var(--text-label-sm)', color: 'var(--text-muted)' }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: c, display: 'inline-block' }} />
                   {l}
@@ -146,15 +273,44 @@ export default function Analytics() {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 140 }}>
-            {BAR_DATA.map((d, i) => <BarGroup key={i} data={d} i={i} />)}
+            {barData.map((d, i) => <BarGroup key={i} data={d} i={i} />)}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
             {WEEK_DAYS.map(d => (
-              <span key={d} style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', flex: 1, textAlign: 'center', fontSize: 10 }}>{d.slice(0,2)}</span>
+              <span key={d} style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', flex: 1, textAlign: 'center', fontSize: 10 }}>{d.slice(0, 2)}</span>
             ))}
           </div>
         </div>
       </div>
+
+      {/* Recent completed tasks (from backend) */}
+      {recentCompleted.length > 0 && (
+        <div className="card glass fade-up d4">
+          <div className="card-title" style={{ marginBottom: 16 }}>
+            <span className="material-symbols-outlined icon-sm">task_alt</span> Recently Completed
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {recentCompleted.map((task, i) => (
+              <div key={task.id ?? i} style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '10px 14px', borderRadius: 8,
+                background: 'rgba(78,222,163,0.05)',
+                border: '1px solid rgba(78,222,163,0.1)',
+              }}>
+                <span className="material-symbols-outlined icon-sm" style={{ color: 'var(--primary)', fontSize: 16 }}>check_circle</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ font: 'var(--text-mono)', fontSize: 13, color: 'var(--text)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</p>
+                  {task.completedAt && (
+                    <p style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', marginTop: 2 }}>
+                      {new Date(task.completedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Historical Timeline */}
       <div className="card glass fade-up d4">

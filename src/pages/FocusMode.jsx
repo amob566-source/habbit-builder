@@ -1,4 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
+
+const BASE_URL = 'http://localhost:3001'
+
+async function getTask(id) {
+  const res = await fetch(`${BASE_URL}/api/tasks/${id}`)
+  if (!res.ok) throw new Error('Failed to fetch task')
+  return res.json()
+}
+
+async function completeTask(id) {
+  const res = await fetch(`${BASE_URL}/api/tasks/${id}/complete`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to complete task')
+  return res.json()
+}
 
 const TOTAL_SESSIONS = 4
 
@@ -76,12 +91,22 @@ function buildAudio(id, vol) {
 
 /* ── Component ─────────────────────────────────────────────────────────────── */
 export default function FocusMode() {
-  // Objective
-  const [objTitle,    setObjTitle]    = useState('Architect Core API')
-  const [objDesc,     setObjDesc]     = useState('Deep work session focused on finalizing routing logic and authentication middleware.')
+  const { taskId } = useParams()
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // Objective — seeded from route state if available, otherwise fetched
+  const [objTitle,    setObjTitle]    = useState(location.state?.title ?? 'Architect Core API')
+  const [objDesc,     setObjDesc]     = useState(location.state?.description ?? 'Deep work session focused on finalizing routing logic and authentication middleware.')
   const [editing,     setEditing]     = useState(false)
   const [draftTitle,  setDraftTitle]  = useState('')
   const [draftDesc,   setDraftDesc]   = useState('')
+
+  // Task loading / completion state
+  const [taskLoading,   setTaskLoading]   = useState(!!taskId)
+  const [completing,    setCompleting]    = useState(false)
+  const [completed,     setCompleted]     = useState(false)
+  const [completeError, setCompleteError] = useState(null)
 
   // Timer
   const [selectedPreset, setSelectedPreset] = useState(1)
@@ -97,6 +122,37 @@ export default function FocusMode() {
   const [volume, setVolume] = useState(0.7)
   const audioRef    = useRef(null)
   const intervalRef = useRef(null)
+
+  /* ── Fetch task from backend ── */
+  useEffect(() => {
+    if (!taskId) return
+    setTaskLoading(true)
+    getTask(taskId)
+      .then(task => {
+        if (task.title)       setObjTitle(task.title)
+        if (task.description) setObjDesc(task.description)
+        if (task.completed)   setCompleted(true)
+      })
+      .catch(err => console.error('Failed to load task:', err))
+      .finally(() => setTaskLoading(false))
+  }, [taskId])
+
+  /* ── Complete task handler ── */
+  const handleCompleteTask = () => {
+    if (!taskId || completing || completed) return
+    setCompleting(true)
+    setCompleteError(null)
+    completeTask(taskId)
+      .then(() => {
+        setCompleted(true)
+        setRunning(false)
+      })
+      .catch(err => {
+        console.error('Failed to complete task:', err)
+        setCompleteError('Could not mark complete. Try again.')
+      })
+      .finally(() => setCompleting(false))
+  }
 
   /* ── Audio ── */
   const stopAudio = useCallback(() => {
@@ -169,7 +225,7 @@ export default function FocusMode() {
   }
   const cancelEdit = () => setEditing(false)
 
-  const circ  = 2 * Math.PI * 108
+  const circ      = 2 * Math.PI * 108
   const dashOffset = circ * (1 - (total - seconds) / total)
 
   return (
@@ -224,7 +280,12 @@ export default function FocusMode() {
         }}>
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg, transparent, rgba(78,222,163,0.35), transparent)' }} />
 
-          {editing ? (
+          {taskLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--primary)', animation: 'ping 1.5s ease-in-out infinite' }} />
+              <span style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', letterSpacing: '0.08em' }}>Loading task…</span>
+            </div>
+          ) : editing ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
                 <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--primary)' }} />
@@ -271,26 +332,75 @@ export default function FocusMode() {
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--primary)', animation: 'ping 2s ease-in-out infinite', flexShrink: 0 }} />
-                  <span style={{ font: 'var(--text-label-sm)', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--primary)' }}>Current Objective</span>
+                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: completed ? 'var(--secondary)' : 'var(--primary)', animation: completed ? 'none' : 'ping 2s ease-in-out infinite', flexShrink: 0 }} />
+                  <span style={{ font: 'var(--text-label-sm)', letterSpacing: '0.1em', textTransform: 'uppercase', color: completed ? 'var(--secondary)' : 'var(--primary)' }}>
+                    {completed ? 'Completed' : 'Current Objective'}
+                  </span>
                 </div>
-                <h2 style={{ font: 'var(--text-h2)', color: 'var(--text)', margin: '0 0 4px', letterSpacing: '-0.02em', lineHeight: 1.2 }}>{objTitle}</h2>
+                <h2 style={{ font: 'var(--text-h2)', color: 'var(--text)', margin: '0 0 4px', letterSpacing: '-0.02em', lineHeight: 1.2, textDecoration: completed ? 'line-through' : 'none', opacity: completed ? 0.6 : 1 }}>{objTitle}</h2>
                 <p style={{ color: 'var(--text-subtle)', margin: 0, fontSize: 13, lineHeight: 1.55 }}>{objDesc}</p>
               </div>
-              <button onClick={openEdit}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(78,222,163,0.1)'; e.currentTarget.style.color = 'var(--primary)' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
-                style={{
-                  width: 30, height: 30, borderRadius: 7, border: '1px solid rgba(60,74,66,0.35)',
-                  background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  flexShrink: 0, transition: 'all 0.2s',
-                }}>
-                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>edit</span>
-              </button>
+              {!completed && (
+                <button onClick={openEdit}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(78,222,163,0.1)'; e.currentTarget.style.color = 'var(--primary)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
+                  style={{
+                    width: 30, height: 30, borderRadius: 7, border: '1px solid rgba(60,74,66,0.35)',
+                    background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0, transition: 'all 0.2s',
+                  }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>edit</span>
+                </button>
+              )}
             </div>
           )}
         </div>
+
+        {/* ── COMPLETE TASK BUTTON (only when a real task is loaded) ── */}
+        {taskId && !taskLoading && (
+          <div style={{ animation: 'fade-up 0.4s 0.08s ease both', flexShrink: 0 }}>
+            {completed ? (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 9, justifyContent: 'center',
+                padding: '10px 16px', borderRadius: 10,
+                background: 'rgba(78,222,163,0.08)', border: '1px solid rgba(78,222,163,0.2)',
+              }}>
+                <span className="material-symbols-outlined icon-fill" style={{ fontSize: 16, color: 'var(--primary)' }}>task_alt</span>
+                <span style={{ font: 'var(--text-label-sm)', color: 'var(--primary)', letterSpacing: '0.06em' }}>Task marked complete</span>
+                <button
+                  onClick={() => navigate(-1)}
+                  style={{
+                    marginLeft: 'auto', padding: '4px 12px', borderRadius: 7, border: 'none',
+                    background: 'rgba(78,222,163,0.15)', color: 'var(--primary)', cursor: 'pointer',
+                    font: 'var(--text-label-sm)',
+                  }}
+                >← Back</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <button
+                  onClick={handleCompleteTask}
+                  disabled={completing}
+                  style={{
+                    width: '100%', padding: '10px 16px', borderRadius: 10, border: 'none', cursor: completing ? 'wait' : 'pointer',
+                    background: completing ? 'rgba(78,222,163,0.08)' : 'rgba(78,222,163,0.14)',
+                    color: 'var(--primary)', font: 'var(--text-label-sm)', letterSpacing: '0.07em',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                    outline: '1px solid rgba(78,222,163,0.2)', transition: 'all 0.2s',
+                    opacity: completing ? 0.6 : 1,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>{completing ? 'hourglass_empty' : 'task_alt'}</span>
+                  {completing ? 'Marking complete…' : 'Mark Task Complete'}
+                </button>
+                {completeError && (
+                  <span style={{ font: 'var(--text-label-sm)', color: 'rgba(255,100,100,0.8)', textAlign: 'center' }}>{completeError}</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── TIMER RING + CONTROLS ── */}
         <div style={{
@@ -406,7 +516,7 @@ export default function FocusMode() {
             <span style={{ font: 'var(--text-label-sm)', color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Ambient Sound</span>
             {running && sound !== 'none' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                {[0,1,2,3].map(i => (
+                {[0, 1, 2, 3].map(i => (
                   <div key={i} style={{
                     width: 2.5, borderRadius: 2, background: 'var(--primary)', opacity: 0.75,
                     animation: `soundbar 1.1s ease-in-out ${i * 0.17}s infinite alternate`,
