@@ -15,6 +15,19 @@ function getDayLabel() {
   return new Date().toLocaleDateString(undefined, { weekday: 'long' })
 }
 
+function parseGoalChildren(goal) {
+  return goal.children ? (typeof goal.children === 'string' ? JSON.parse(goal.children) : goal.children) : []
+}
+
+function normalizeGoal(goal) {
+  return {
+    ...goal,
+    label: goal.title ?? goal.label,
+    children: parseGoalChildren(goal),
+    pct: typeof goal.pct === 'number' ? goal.pct : (goal.pct ? Number(goal.pct) : 0),
+  }
+}
+
 // Map a backend habit to the props HabitItem expects
 function habitToItemProps(habit) {
   const completed = !!habit.done
@@ -119,7 +132,7 @@ export default function Dashboard() {
     Promise.allSettled([getHabits('all'), getGoals(), getAnalytics()])
       .then(([habitsRes, goalsRes, analyticsRes]) => {
         if (habitsRes.status === 'fulfilled') setHabits(habitsRes.value ?? [])
-        if (goalsRes.status === 'fulfilled') setGoals(goalsRes.value ?? [])
+        if (goalsRes.status === 'fulfilled') setGoals((Array.isArray(goalsRes.value) ? goalsRes.value : []).map(normalizeGoal))
         if (analyticsRes.status === 'fulfilled') {
           const daily = analyticsRes.value?.daily ?? []
           let count = 0
@@ -188,18 +201,18 @@ export default function Dashboard() {
   // Derived display data
   const stats = buildStats(habits)
   const habitProps = habits.map(habitToItemProps)
+  const taskGoals = goals.flatMap(goal =>
+    (Array.isArray(goal.children) ? goal.children : []).map(child => ({
+      ...child,
+      parentLabel: goal.label,
+      parentColor: goal.color,
+    }))
+  )
 
   // AI insights: prefer backend response, otherwise show static fallback
   const insights = aiSequence?.insights ?? [
     { color: 'var(--secondary)', text: 'You tend to experience a 15% drop in focus retention after 2PM. Consider scheduling low-cognitive tasks next.' },
     { color: 'var(--primary)', text: 'Consistent completion of Morning Routine nodes is correlating strongly with higher daily Momentum scores (+12%).' },
-  ]
-
-  // Sequence items: prefer backend response, otherwise show static fallback
-  const sequenceItems = aiSequence?.sequence ?? [
-    { time: '14:00 – 15:30', label: 'Deep Work: Architecture', active: true },
-    { time: '16:00 – 16:30', label: 'System Review', active: false },
-    { time: '18:00 – 18:30', label: 'Mobility Routine', active: false },
   ]
 
   const momentumScore = aiSequence?.momentumScore ?? Math.round((stats.done / Math.max(stats.total, 1)) * 100)
@@ -224,7 +237,7 @@ export default function Dashboard() {
               <span className="material-symbols-outlined icon-sm icon-fill">local_fire_department</span>
               {streak || 4} Day Streak
             </div>
-            <h1 className="page-title">{getGreeting()}, User</h1>
+            <h1 className="page-title">{getGreeting()}, Arham</h1>
             <p className="page-subtitle">{getDayLabel()} · System Status: {loading ? 'Loading…' : 'Optimal'}</p>
           </div>
           <button
@@ -324,31 +337,35 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Upcoming Sequence */}
+          {/* Tasks */}
           <div className="card fade-up d3">
-            <div className="card-title"><span className="material-symbols-outlined icon-sm">schedule</span> Upcoming Sequence</div>
+            <div className="card-title"><span className="material-symbols-outlined icon-sm">task_alt</span> Tasks</div>
             <div style={{ display: 'flex', flexDirection: 'column', position: 'relative' }}>
-              <div style={{ position: 'absolute', left: 10, top: 4, bottom: 4, width: 2, background: 'var(--border)' }} />
-              {sequenceItems.map((item, i) => (
+              {taskGoals.length > 0 ? taskGoals.map((task, i) => (
                 <div
-                  key={i}
-                  style={{ display: 'flex', gap: 16, padding: '10px 0', alignItems: 'flex-start', position: 'relative', zIndex: 1, cursor: item.taskId ? 'pointer' : 'default' }}
-                  onClick={() => item.taskId && handleTaskClick(item.taskId)}
+                  key={task.id ?? `${task.parentLabel}-${i}`}
+                  style={{ display: 'flex', gap: 16, padding: '10px 0', alignItems: 'flex-start', position: 'relative', zIndex: 1 }}
                 >
                   <div style={{
                     width: 22, height: 22, borderRadius: '50%', flexShrink: 0, marginTop: 1,
-                    background: 'var(--surface-lowest)',
-                    border: `2px solid ${item.active ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}`,
+                    background: task.status === 'done' ? 'var(--primary)' : 'var(--surface-lowest)',
+                    border: `2px solid ${task.status === 'active' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {item.active && <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--primary)' }} />}
+                    {task.status === 'done' ? <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#001a10' }} /> : null}
                   </div>
-                  <div style={{ opacity: item.active ? 1 : 0.6 }}>
-                    <div style={{ font: 'var(--text-label-sm)', color: item.active ? 'var(--primary)' : 'var(--text-muted)', marginBottom: 2 }}>{item.time}</div>
-                    <div style={{ font: 'var(--text-body)', color: 'var(--text)', fontWeight: 500 }}>{item.label}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ font: 'var(--text-body)', color: 'var(--text)', fontWeight: 500 }}>{task.label}</div>
+                    <div style={{ font: 'var(--text-label-sm)', color: task.status === 'done' ? 'var(--text-muted)' : 'var(--text-muted)', marginTop: 2 }}>{task.sub || task.parentLabel}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                      <div style={{ fontSize: 11, color: task.status === 'done' ? 'var(--text-muted)' : task.parentColor ?? 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>{task.parentLabel}</div>
+                      <div style={{ fontSize: 11, color: task.status === 'done' ? 'var(--text-muted)' : 'var(--primary)', fontFamily: 'JetBrains Mono, monospace' }}>{task.pct ?? 0}%</div>
+                    </div>
                   </div>
                 </div>
-              ))}
+              )) : (
+                <div style={{ padding: '14px 0', color: 'var(--text-muted)', font: 'var(--text-body)' }}>No tasks available from your goal tree yet.</div>
+              )}
             </div>
           </div>
         </div>
